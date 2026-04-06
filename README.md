@@ -1,8 +1,20 @@
+<div align="center">
+
 # btcbot
 
-Latency-arbitrage bot for [Polymarket](https://polymarket.com)'s 5-minute BTC "Up or Down" binary markets, with a real-time web dashboard.
+Latency-arbitrage trading bot for [Polymarket](https://polymarket.com)'s 5-minute BTC binary markets, with a real-time web dashboard.
 
-The edge: BTC prices on Binance update in ~100ms. Polymarket odds and the Chainlink oracle lag behind. The bot detects these divergences and bets on the correct direction before the market catches up.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+
+[Overview](#overview) · [Quick Start](#quick-start) · [Dashboard](#dashboard) · [Configuration](#configuration) · [Architecture](#architecture)
+
+</div>
+
+---
+
+**The edge**: BTC prices on Binance update in ~100ms. Polymarket odds and the Chainlink oracle lag behind. The bot detects these divergences and bets on the correct direction before the market catches up.
 
 Inspired by **stargate5** — [$168K profit from 16,816 trades at 61.5% win rate](#about-stargate5) on these exact markets.
 
@@ -31,10 +43,21 @@ Polymarket offers rolling 5-minute windows where you bet whether BTC will finish
 
 The bot runs **5 concurrent async tasks**: two WebSocket feeds (Binance + Polymarket), market discovery, signal evaluation, and risk monitoring — all coordinated via `asyncio.TaskGroup`.
 
+### Features
+
+- **Real-time feeds** — Binance BTC/USDT WebSocket (~100ms) + Polymarket CLOB odds stream
+- **Signal engine** — Sigmoid probability model comparing BTC momentum vs market odds
+- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, auto-hedging
+- **Live dashboard** — Dark-themed UI with auto-refreshing panels, trade log, and Chart.js equity curves
+- **Paper trading** — Full simulation with realistic spread modeling, same DB schema as live
+- **CLI tools** — `serve`, `run`, `status`, `history`, `initdb`
+- **JSON API** — `/api/live`, `/api/trades`, `/api/daily-pnl` for external integrations
+
 ## Quick Start
 
 ```bash
-git clone <repo> && cd experiment-001
+git clone https://github.com/sebbourgeois/polybtcbot.git
+cd polybtcbot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 btcbot initdb
@@ -45,16 +68,6 @@ Open [http://localhost:8500](http://localhost:8500) — the dashboard shows live
 
 > [!NOTE]
 > Paper mode (default) simulates trades using real market data. No wallet or API keys needed.
-
-## Features
-
-- **Real-time feeds** — Binance BTC/USDT WebSocket (~100ms) + Polymarket CLOB odds stream
-- **Signal engine** — Sigmoid probability model comparing BTC momentum vs market odds
-- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, auto-hedging
-- **Live dashboard** — Dark-themed UI with auto-refreshing panels, trade log, and Chart.js equity curves
-- **Paper trading** — Full simulation with realistic spread modeling, same DB schema as live
-- **CLI tools** — `serve`, `run`, `status`, `history`, `initdb`
-- **JSON API** — `/api/live`, `/api/trades`, `/api/daily-pnl` for external integrations
 
 ## How the Strategy Works
 
@@ -103,7 +116,7 @@ Start the dashboard with:
 btcbot serve --paper -v
 ```
 
-**Pages:**
+![btcbot dashboard](assets/polybtcbot.png)
 
 | Page | URL | Content |
 |---|---|---|
@@ -204,7 +217,7 @@ btcbot initdb                                        # Create SQLite database
 ```
 
 > [!IMPORTANT]
-> For live trading, set `BOT_PAPER_MODE=false` and provide `BOT_PRIVATE_KEY` with a Polygon wallet funded with USDC.
+> For live trading, see [SETUP.md](SETUP.md) for wallet setup, USDC funding, and contract approvals. Set `BOT_PAPER_MODE=false` and provide `BOT_PRIVATE_KEY` with a funded Polygon wallet.
 
 ## Architecture
 
@@ -266,7 +279,7 @@ pytest tests/ -v
 
 ## About stargate5
 
-This bot is based on analysis of the real [stargate5](https://polymarket.com/@stargate5) wallet (`0xb4D2499b6CAbD0BB93672BB17c5AE47101759EE1`):
+This bot is based on analysis of the real [stargate5](https://polymarket.com/@stargate5) wallet:
 
 | Metric | Value |
 |---|---|
@@ -276,12 +289,10 @@ This bot is based on analysis of the real [stargate5](https://polymarket.com/@st
 | Predictions | 16,816 |
 | Win Rate | 61.5% |
 | Volume | $28,020,124 |
-| Classification | Algo Trader |
-| Joined | December 11, 2025 |
 
 **What they do**: 75.6% directional bets + 24.4% merge/hedge operations. Exclusively trades 5-minute BTC binary markets with small positions ($15–60). Runs 24/7 as an automated bot.
 
 **What works**: A 61.5% win rate on near-even odds, compounded over thousands of trades. The key is consistency and volume, not any single big win.
 
 > [!WARNING]
-> The viral Twitter thread about this trader frames it as a "guaranteed money printer." It's not. The -$67K in unrealized losses and 38.5% trade loss rate show real downside risk. Past performance does not guarantee future results.
+> The -$67K in unrealized losses and 38.5% trade loss rate show real downside risk. Past performance does not guarantee future results.
