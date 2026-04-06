@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Trades — btcbot{% endblock %}
+
+{% block content %}
+<h1>Trade Log</h1>
+
+<div class="stats-row">
+  <div class="stat">
+    <div class="label">Total Trades</div>
+    <div class="value">{{ total_trades }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Entries</div>
+    <div class="value">{{ entries }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Hedges</div>
+    <div class="value">{{ hedges }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Avg Size</div>
+    <div class="value">${{ "%.2f"|format(avg_size) }}</div>
+  </div>
+</div>
+
+{% if trades %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Market</th>
+      <th>Type</th>
+      <th>Direction</th>
+      <th>Price</th>
+      <th>Qty</th>
+      <th>Amount</th>
+      <th>Edge</th>
+      <th>Strength</th>
+      <th>Result</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in trades %}
+    <tr>
+      <td class="mono muted">{{ t.time_str }}</td>
+      <td class="mono">{{ t.market_slug|replace("btc-updown-5m-", "") }}</td>
+      <td><span class="badge {{ t.trade_type|lower }}">{{ t.trade_type }}</span></td>
+      <td><span class="badge {{ t.direction|lower }}">{{ t.direction }}</span></td>
+      <td class="num">${{ "%.3f"|format(t.fill_price) }}</td>
+      <td class="num">{{ "%.1f"|format(t.token_quantity) }}</td>
+      <td class="num">${{ "%.2f"|format(t.amount_usd) }}</td>
+      <td class="num {{ 'pos' if (t.signal_edge or 0) > 0 else '' }}">{{ "%+.1f"|format((t.signal_edge or 0) * 100) }}%</td>
+      <td class="num">{{ "%.0f"|format((t.signal_strength or 0) * 100) }}%</td>
+      <td>
+        {% if t.result == 'win' %}<span class="badge win">WIN</span>
+        {% elif t.result == 'loss' %}<span class="badge loss">LOSS</span>
+        {% elif t.result == 'hedge' %}<span class="badge hedge">HEDGED</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td>{% if t.is_paper %}<span class="badge paper">paper</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">No trades yet.</div>
+{% endif %}
+{% endblock %}

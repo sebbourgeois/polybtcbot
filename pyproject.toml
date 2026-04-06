@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "btcbot"
+version = "0.1.0"
+description = "Polymarket 5-minute BTC Up/Down trading bot — latency arbitrage on binary crypto markets"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "httpx>=0.27",
+    "websockets>=12.0",
+    "tenacity>=8.2",
+    "aiosqlite>=0.20",
+    "typer>=0.12",
+    "py-clob-client>=0.18",
+    "python-dotenv>=1.0",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[project.scripts]
+btcbot = "btcbot.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["btcbot"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,36 @@
+<!-- Recent trades partial — refreshed via htmx -->
+<h2>Recent Trades</h2>
+{% if trades %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Market</th>
+      <th>Type</th>
+      <th>Direction</th>
+      <th>Price</th>
+      <th>Amount</th>
+      <th>Edge</th>
+      <th>Strength</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in trades %}
+    <tr>
+      <td class="mono muted">{{ t.time_ago }}</td>
+      <td class="mono">{{ t.market_slug|replace("btc-updown-5m-", "")|truncate(12) }}</td>
+      <td><span class="badge {{ t.trade_type|lower }}">{{ t.trade_type }}</span></td>
+      <td><span class="badge {{ t.direction|lower }}">{{ t.direction }}</span></td>
+      <td class="num">${{ "%.3f"|format(t.fill_price) }}</td>
+      <td class="num">${{ "%.2f"|format(t.amount_usd) }}</td>
+      <td class="num {{ 'pos' if (t.signal_edge or 0) > 0 else '' }}">{{ "%+.1f"|format((t.signal_edge or 0) * 100) }}%</td>
+      <td class="num">{{ "%.0f"|format((t.signal_strength or 0) * 100) }}%</td>
+      <td>{% if t.is_paper %}<span class="badge paper">paper</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">No trades yet. The bot will trade when it detects mispricing.</div>
+{% endif %}

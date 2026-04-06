@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — btcbot{% endblock %}
+
+{% block content %}
+<!-- Auto-refresh live section every 2 seconds -->
+<div hx-get="/partials/live" hx-trigger="every 2s" hx-swap="innerHTML">
+  {% include "partials/live.html" %}
+</div>
+
+<!-- Recent trades (refresh every 5s) -->
+<section hx-get="/partials/recent-trades" hx-trigger="every 5s" hx-swap="innerHTML">
+  {% include "partials/recent_trades.html" %}
+</section>
+
+<!-- P&L chart -->
+<section>
+  <h2>Hourly P&amp;L</h2>
+  <div class="chart-wrap">
+    <canvas id="pnlChart" height="200"></canvas>
+  </div>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const ctx = document.getElementById('pnlChart');
+  if (!ctx) return;
+
+  fetch('/api/hourly-pnl?hours=24')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.length) return;
+      const labels = data.map(d => d.hour.slice(11));  // "HH:00"
+      const values = data.map(d => d.net_pnl_usd);
+      const trades = data.map(d => d.trades);
+      const cumulative = [];
+      let running = 0;
+      values.forEach(v => { running += v; cumulative.push(running); });
+
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Hourly P&L',
+              data: values,
+              backgroundColor: values.map(v => v >= 0 ? 'rgba(79,207,143,0.5)' : 'rgba(255,107,107,0.5)'),
+              borderColor: values.map(v => v >= 0 ? '#4fcf8f' : '#ff6b6b'),
+              borderWidth: 1,
+              yAxisID: 'y',
+            },
+            {
+              label: 'Cumulative',
+              data: cumulative,
+              type: 'line',
+              borderColor: '#4aa8ff',
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.3,
+              yAxisID: 'y1',
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#30363d' } },
+            y: {
+              position: 'left',
+              ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(0) },
+              grid: { color: '#30363d' },
+            },
+            y1: {
+              position: 'right',
+              ticks: { color: '#4aa8ff', callback: v => '$' + v.toFixed(0) },
+              grid: { display: false },
+            }
+          },
+          plugins: {
+            legend: { labels: { color: '#e6edf3', font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                afterLabel: function(ctx) {
+                  if (ctx.datasetIndex === 0) return trades[ctx.dataIndex] + ' trades';
+                }
+              }
+            }
+          }
+        }
+      });
+    });
+});
+</script>
+{% endblock %}

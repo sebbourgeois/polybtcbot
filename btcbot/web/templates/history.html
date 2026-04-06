@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}History — btcbot{% endblock %}
+
+{% block content %}
+<h1>Performance History</h1>
+
+<div class="stats-row">
+  <div class="stat">
+    <div class="label">All-Time P&amp;L</div>
+    <div class="value {{ 'pos' if total_pnl >= 0 else 'neg' }}">${{ "%+.2f"|format(total_pnl) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Total Trades</div>
+    <div class="value">{{ total_trades }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Win Rate</div>
+    <div class="value">{{ "%.1f"|format(win_rate) }}%</div>
+  </div>
+  <div class="stat">
+    <div class="label">Best Day</div>
+    <div class="value pos">${{ "%+.2f"|format(best_day) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Worst Day</div>
+    <div class="value neg">${{ "%+.2f"|format(worst_day) }}</div>
+  </div>
+</div>
+
+<section>
+  <h2>Equity Curve</h2>
+  <div class="chart-wrap">
+    <canvas id="equityChart" height="250"></canvas>
+  </div>
+</section>
+
+<section>
+  <h2>Daily Breakdown</h2>
+  {% if days %}
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Trades</th>
+        <th>Wins</th>
+        <th>Losses</th>
+        <th>Hedged</th>
+        <th>Win Rate</th>
+        <th>P&amp;L</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in days %}
+      <tr>
+        <td class="mono">{{ d.date }}</td>
+        <td class="num">{{ d.trades_count }}</td>
+        <td class="num pos">{{ d.wins }}</td>
+        <td class="num neg">{{ d.losses }}</td>
+        <td class="num">{{ d.hedged }}</td>
+        <td class="num">{{ "%.0f"|format(d.win_rate) }}%</td>
+        <td class="num {{ 'pos' if d.net_pnl_usd >= 0 else 'neg' }}">${{ "%+.2f"|format(d.net_pnl_usd) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">No history yet.</div>
+  {% endif %}
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const ctx = document.getElementById('equityChart');
+  if (!ctx) return;
+
+  fetch('/api/daily-pnl?days=90')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.length) return;
+      const labels = data.map(d => d.date);
+      const cumulative = [];
+      let running = 0;
+      data.forEach(d => { running += d.net_pnl_usd; cumulative.push(running); });
+
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Cumulative P&L',
+            data: cumulative,
+            borderColor: cumulative[cumulative.length-1] >= 0 ? '#4fcf8f' : '#ff6b6b',
+            backgroundColor: cumulative[cumulative.length-1] >= 0
+              ? 'rgba(79,207,143,0.1)'
+              : 'rgba(255,107,107,0.1)',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+            fill: true,
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#30363d' } },
+            y: {
+              ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(0) },
+              grid: { color: '#30363d' },
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          }
+        }
+      });
+    });
+});
+</script>
+{% endblock %}

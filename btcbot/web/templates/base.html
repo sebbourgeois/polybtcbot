@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}btcbot{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="flex">
+      <a class="brand" href="/">btcbot
+        <span class="mode {{ 'paper' if paper_mode else 'live' }}">{{ 'PAPER' if paper_mode else 'LIVE' }}</span>
+      </a>
+    </div>
+    <nav>
+      <a href="/" {% if active_page == 'dashboard' %}class="active"{% endif %}>Dashboard</a>
+      <a href="/trades" {% if active_page == 'trades' %}class="active"{% endif %}>Trades</a>
+      <a href="/history" {% if active_page == 'history' %}class="active"{% endif %}>History</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>btcbot v0.1 — Polymarket 5m BTC Up/Down</footer>
+</body>
+</html>

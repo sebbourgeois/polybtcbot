@@ -1,0 +1,337 @@
+/* ── Design tokens ───────────────────────────────────────────────── */
+:root {
+  --bg:      #0e1117;
+  --panel:   #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #8b949e;
+  --accent:  #4aa8ff;
+  --pos:     #4fcf8f;
+  --neg:     #ff6b6b;
+  --warn:    #f0b849;
+  --up:      #4fcf8f;
+  --down:    #ff6b6b;
+
+  --font:    -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --radius:  8px;
+}
+
+/* ── Reset ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Header ──────────────────────────────────────────────────────── */
+header.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+header.top .brand {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+header.top .brand .mode {
+  font-size: 11px;
+  font-weight: 400;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+header.top .brand .mode.paper {
+  background: rgba(240, 184, 73, 0.15);
+  color: var(--warn);
+}
+
+header.top .brand .mode.live {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--neg);
+}
+
+nav { display: flex; gap: 20px; }
+nav a { color: var(--muted); font-size: 13px; }
+nav a:hover { color: var(--text); text-decoration: none; }
+nav a.active { color: var(--text); font-weight: 500; }
+
+/* ── Main ────────────────────────────────────────────────────────── */
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1 { font-size: 18px; margin-bottom: 16px; font-weight: 600; }
+h2 { font-size: 15px; margin-bottom: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ── Panels ──────────────────────────────────────────────────────── */
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.panel .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.panel .value {
+  font-size: 22px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+.panel .value.pos { color: var(--pos); }
+.panel .value.neg { color: var(--neg); }
+.panel .value.up  { color: var(--up); }
+.panel .value.down { color: var(--down); }
+
+.panel .sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* ── Big stat row ────────────────────────────────────────────────── */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  text-align: center;
+}
+
+.stat .label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.stat .value {
+  font-size: 18px;
+  font-weight: 600;
+  font-family: var(--mono);
+  margin-top: 2px;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────── */
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 24px;
+}
+
+table.grid thead th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+table.grid tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+table.grid tbody tr:last-child td { border-bottom: none; }
+table.grid tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+td.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+td.pos { color: var(--pos); }
+td.neg { color: var(--neg); }
+
+/* ── Badges ──────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.badge.up {
+  background: rgba(79, 207, 143, 0.15);
+  color: var(--up);
+}
+
+.badge.down {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--down);
+}
+
+.badge.entry {
+  background: rgba(74, 168, 255, 0.15);
+  color: var(--accent);
+}
+
+.badge.hedge {
+  background: rgba(240, 184, 73, 0.15);
+  color: var(--warn);
+}
+
+.badge.win {
+  background: rgba(79, 207, 143, 0.15);
+  color: var(--pos);
+}
+
+.badge.loss {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--neg);
+}
+
+.badge.paper {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--muted);
+}
+
+/* ── Signal bar ──────────────────────────────────────────────────── */
+.signal-bar {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.signal-bar .field {
+  display: flex;
+  flex-direction: column;
+}
+
+.signal-bar .field .label {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.signal-bar .field .value {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+/* ── Chart container ─────────────────────────────────────────────── */
+.chart-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.chart-wrap canvas {
+  width: 100% !important;
+  max-height: 300px;
+}
+
+/* ── Section spacing ─────────────────────────────────────────────── */
+section { margin-bottom: 32px; }
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+footer {
+  text-align: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Utility ─────────────────────────────────────────────────────── */
+.muted { color: var(--muted); }
+.mono  { font-family: var(--mono); }
+.flex  { display: flex; align-items: center; gap: 8px; }
+.grow  { flex: 1; }
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* ── Pulse indicator ─────────────────────────────────────────────── */
+.pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  animation: pulse-anim 2s ease-in-out infinite;
+}
+
+.pulse.green  { background: var(--pos); }
+.pulse.red    { background: var(--neg); }
+.pulse.yellow { background: var(--warn); }
+.pulse.gray   { background: var(--muted); }
+
+@keyframes pulse-anim {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* ── Progress bar (time remaining) ───────────────────────────────── */
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar .fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 1s linear;
+}
+
+.progress-bar .fill.green  { background: var(--pos); }
+.progress-bar .fill.yellow { background: var(--warn); }
+.progress-bar .fill.red    { background: var(--neg); }
