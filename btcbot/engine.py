@@ -18,9 +18,13 @@ from .risk import RiskManager
 from .signal import SignalGenerator
 from .storage.db import connect, init_db
 from .storage.repo import (
+    clear_open_position,
+    get_market,
     insert_btc_price,
     insert_poly_price,
     insert_trade,
+    load_open_position,
+    save_open_position,
     set_market_outcome,
     set_market_start_price,
     update_daily_pnl,
@@ -68,6 +72,7 @@ class Engine:
         log.info("Starting BTC bot in %s mode (bankroll=$%.2f)", mode, CONFIG.bankroll)
 
         await init_db()
+        await self._restore_state()
         self._http_client = httpx.AsyncClient(
             headers={"User-Agent": "btcbot/0.1"},
             timeout=httpx.Timeout(10.0, connect=5.0),
@@ -88,6 +93,48 @@ class Engine:
             if self._http_client:
                 await self._http_client.aclose()
             log.info("Engine stopped")
+
+    # ── State recovery ─────────────────────────────────────────────────
+
+    async def _restore_state(self) -> None:
+        """Restore open position from DB so restarts don't lose trades."""
+        try:
+            async with connect() as conn:
+                pos_data = await load_open_position(conn)
+                if not pos_data:
+                    return
+
+                market_row = await get_market(conn, pos_data["market_slug"])
+                if not market_row:
+                    log.warning("Saved position references unknown market %s — clearing", pos_data["market_slug"])
+                    await clear_open_position(conn)
+                    return
+
+                market = Market(
+                    slug=market_row.slug,
+                    condition_id=market_row.condition_id,
+                    up_token_id=market_row.up_token_id,
+                    down_token_id=market_row.down_token_id,
+                    start_ts=market_row.start_ts,
+                    end_ts=market_row.end_ts,
+                )
+                self._current_market = market
+                self._position = OpenPosition(
+                    market=market,
+                    direction=pos_data["direction"],
+                    token_id=pos_data["token_id"],
+                    fill_price=pos_data["fill_price"],
+                    token_quantity=pos_data["token_quantity"],
+                    entry_time=pos_data.get("entry_time", time.time()),
+                )
+                self._last_discovery_market_slug = market.slug
+                log.info(
+                    "Restored position: %s %s @ $%.3f in %s",
+                    pos_data["direction"], market.slug,
+                    pos_data["fill_price"], market.slug,
+                )
+        except Exception:
+            log.warning("Failed to restore position state", exc_info=True)
 
     # ── Callbacks ──────────────────────────────────────────────────────
 
@@ -180,7 +227,6 @@ class Engine:
         btc_end = self._binance.latest_price
         start_row = None
         try:
-            from .storage.repo import get_market
             async with connect() as conn:
                 start_row = await get_market(conn, mkt.slug)
         except Exception:
@@ -248,6 +294,7 @@ class Engine:
                     gross_pnl=today_pnl,
                     net_pnl=today_pnl,
                 )
+                await clear_open_position(conn)
         except Exception:
             log.warning("Failed to persist resolution", exc_info=True)
 
@@ -303,6 +350,15 @@ class Engine:
                 try:
                     async with connect() as conn:
                         await insert_trade(conn, trade)
+                        await save_open_position(
+                            conn,
+                            market_slug=market.slug,
+                            direction=trade.direction,
+                            token_id=trade.token_id,
+                            fill_price=trade.fill_price,
+                            token_quantity=trade.token_quantity,
+                            entry_time=self._position.entry_time,
+                        )
                 except Exception:
                     log.warning("Failed to persist trade", exc_info=True)
 

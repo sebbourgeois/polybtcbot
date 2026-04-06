@@ -362,6 +362,43 @@ async def insert_poly_price(
 # ── System state ───────────────────────────────────────────────────────
 
 
+async def save_open_position(
+    conn: aiosqlite.Connection,
+    market_slug: str,
+    direction: str,
+    token_id: str,
+    fill_price: float,
+    token_quantity: float,
+    entry_time: float,
+) -> None:
+    """Persist the current open position so it survives restarts."""
+    payload = json.dumps({
+        "market_slug": market_slug,
+        "direction": direction,
+        "token_id": token_id,
+        "fill_price": fill_price,
+        "token_quantity": token_quantity,
+        "entry_time": entry_time,
+    })
+    await set_state(conn, "open_position", payload)
+
+
+async def load_open_position(
+    conn: aiosqlite.Connection,
+) -> dict | None:
+    """Load persisted open position, or None if no position is saved."""
+    result = await get_state(conn, "open_position")
+    if result is None:
+        return None
+    return json.loads(result[0])
+
+
+async def clear_open_position(conn: aiosqlite.Connection) -> None:
+    """Remove persisted open position (after resolution or cleanup)."""
+    await conn.execute("DELETE FROM system_state WHERE key = ?", ("open_position",))
+    await conn.commit()
+
+
 async def set_state(conn: aiosqlite.Connection, key: str, value: str) -> None:
     await conn.execute(
         """INSERT INTO system_state (key, value, updated_at)
