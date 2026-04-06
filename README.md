@@ -26,19 +26,19 @@ Inspired by **stargate5** — [$168K profit from 16,816 trades at 61.5% win rate
 Polymarket offers rolling 5-minute windows where you bet whether BTC will finish **higher** ("Up") or **lower** ("Down") than its starting price. Each outcome trades as a token priced $0.01–$0.99, resolving to $1.00 if correct or $0.00 if wrong via [Chainlink](https://data.chain.link/streams/btc-usd).
 
 ```
- Binance WS ──── BTC ticks ────┐
- (sub-second)                   ▼
-                          ┌───────────┐
- Gamma API ── markets ──▶ │  Engine   │── orders ──▶ Polymarket CLOB
- (every 30s)              │           │
-                          │  signal   │
- Polymarket WS ── odds ─▶ │  → risk   │
- (real-time)              │  → trade  │
-                          └─────┬─────┘
-                                │
-                          ┌─────▼─────┐
-                          │  SQLite   │ ◀── Dashboard reads
-                          └───────────┘
+Binance WS ---- BTC ticks ----+
+(sub-second)                   |
+                         +-----------+
+Gamma API -- markets --> |  Engine   |-- orders --> Polymarket CLOB
+(every 30s)              |           |
+                         |  signal   |
+Polymarket WS -- odds -> |  -> risk  |
+(real-time)              |  -> trade |
+                         +-----+-----+
+                               |
+                         +-----v-----+
+                         |  SQLite   | <-- Dashboard reads
+                         +-----------+
 ```
 
 The bot runs **5 concurrent async tasks**: two WebSocket feeds (Binance + Polymarket), market discovery, signal evaluation, and risk monitoring — all coordinated via `asyncio.TaskGroup`.
