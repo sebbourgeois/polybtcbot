@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', function() {
     .then(r => r.json())
     .then(data => {
       if (!data.length) return;
-      const labels = data.map(d => d.hour.slice(11));  // "HH:00"
+      const labels = data.map(d => d.hour.split(' ')[1].split(':')[0] + 'h');
       const values = data.map(d => d.net_pnl_usd);
       const trades = data.map(d => d.trades);
       const cumulative = [];

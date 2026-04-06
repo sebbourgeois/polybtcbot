@@ -161,7 +161,7 @@ table.grid {
 }
 
 table.grid thead th {
-  text-align: left;
+  text-align: center;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -175,12 +175,13 @@ table.grid tbody td {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+  text-align: center;
 }
 
 table.grid tbody tr:last-child td { border-bottom: none; }
 table.grid tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
 
-td.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+td.num { font-family: var(--mono); font-size: 12px; }
 td.pos { color: var(--pos); }
 td.neg { color: var(--neg); }
 

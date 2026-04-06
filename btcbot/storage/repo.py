@@ -226,7 +226,7 @@ async def hourly_pnl(
     since_ts = int(time.time()) - hours * 3600
     cur = await conn.execute(
         """SELECT
-             strftime('%%Y-%%m-%%d %%H:00', resolved_at, 'unixepoch', 'localtime') AS hour,
+             strftime('%Y-%m-%d %H:00', resolved_at, 'unixepoch', 'localtime') AS hour,
              COUNT(*) AS trades,
              COALESCE(SUM(CASE WHEN outcome_correct = 1 THEN 1 ELSE 0 END), 0) AS wins,
              COALESCE(SUM(CASE WHEN outcome_correct = 0 THEN 1 ELSE 0 END), 0) AS losses,
