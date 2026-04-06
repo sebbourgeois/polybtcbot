@@ -46,6 +46,7 @@ def _base_ctx(request: Request, active_page: str) -> dict:
         "request": request,
         "active_page": active_page,
         "paper_mode": engine._paper_mode if engine else CONFIG.paper_mode,
+        "engine_running": engine is not None,
     }
 
 

@@ -96,17 +96,6 @@
       <span class="value {{ 'pos' if delta >= 0 else 'neg' }}">${{ "%+.2f"|format(delta) }}</span>
     </div>
     {% endif %}
-    <div class="grow"></div>
-    <div class="field">
-      <span class="label">Bot Status</span>
-      <div class="flex" style="margin-top: 4px;">
-        {% if engine_running %}
-        <span class="pulse green"></span> <span style="font-weight: 600; font-size: 13px; color:var(--pos)">LIVE ENGINE</span>
-        {% else %}
-        <span class="pulse gray"></span> <span class="muted" style="font-weight: 600; font-size: 13px;">OFFLINE</span>
-        {% endif %}
-      </div>
-    </div>
   </div>
   {% endif %}
 </section>

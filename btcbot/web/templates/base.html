@@ -26,6 +26,13 @@
       <a href="/trades" {% if active_page == 'trades' %}class="active"{% endif %}>Trades</a>
       <a href="/history" {% if active_page == 'history' %}class="active"{% endif %}>History</a>
     </nav>
+    <div class="bot-status">
+      {% if engine_running %}
+      <span class="pulse green"></span> <span style="font-weight: 600; font-size: 13px; color:var(--pos)">LIVE</span>
+      {% else %}
+      <span class="pulse gray"></span> <span class="muted" style="font-weight: 600; font-size: 13px;">OFFLINE</span>
+      {% endif %}
+    </div>
   </header>
 
   <main>
