@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo-btcbot.png" alt="btcbot logo" width="128">
+
 # btcbot
 
 Latency-arbitrage trading bot for [Polymarket](https://polymarket.com)'s 5-minute BTC binary markets, with a real-time web dashboard.
