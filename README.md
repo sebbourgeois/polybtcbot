@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo-btcbot.png" alt="btcbot logo" width="128">
+<img src="assets/logo-btcbot.png" alt="btcbot logo" width="512">
 
 # btcbot
 
