@@ -6,7 +6,7 @@
 
 <div class="stats-row">
   <div class="stat">
-    <div class="label">All-Time P&amp;L</div>
+    <div class="label">All-Time Net P&amp;L</div>
     <div class="value {{ 'pos' if total_pnl >= 0 else 'neg' }}">${{ "%+.2f"|format(total_pnl) }}</div>
   </div>
   <div class="stat">
@@ -15,7 +15,7 @@
   </div>
   <div class="stat">
     <div class="label">Win Rate</div>
-    <div class="value">{{ "%.1f"|format(win_rate) }}%</div>
+    <div class="value" style="color: var(--accent)">{{ "%.1f"|format(win_rate) }}%</div>
   </div>
   <div class="stat">
     <div class="label">Best Day</div>
@@ -28,7 +28,7 @@
 </div>
 
 <section>
-  <h2>Equity Curve</h2>
+  <h2>Equity Curve (Cumulative P&amp;L)</h2>
   <div class="chart-wrap">
     <canvas id="equityChart" height="250"></canvas>
   </div>
@@ -37,34 +37,36 @@
 <section>
   <h2>Daily Breakdown</h2>
   {% if days %}
-  <table class="grid">
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Trades</th>
-        <th>Wins</th>
-        <th>Losses</th>
-        <th>Hedged</th>
-        <th>Win Rate</th>
-        <th>P&amp;L</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for d in days %}
-      <tr>
-        <td class="mono">{{ d.date }}</td>
-        <td class="num">{{ d.trades_count }}</td>
-        <td class="num pos">{{ d.wins }}</td>
-        <td class="num neg">{{ d.losses }}</td>
-        <td class="num">{{ d.hedged }}</td>
-        <td class="num">{{ "%.0f"|format(d.win_rate) }}%</td>
-        <td class="num {{ 'pos' if d.net_pnl_usd >= 0 else 'neg' }}">${{ "%+.2f"|format(d.net_pnl_usd) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-container">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Trades</th>
+          <th>Wins</th>
+          <th>Losses</th>
+          <th>Hedged</th>
+          <th>Win Rate</th>
+          <th>Net P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in days %}
+        <tr>
+          <td class="mono muted">{{ d.date }}</td>
+          <td class="num">{{ d.trades_count }}</td>
+          <td class="num pos">{{ d.wins }}</td>
+          <td class="num neg">{{ d.losses }}</td>
+          <td class="num">{{ d.hedged }}</td>
+          <td class="num" style="font-weight: 600;">{{ "%.0f"|format(d.win_rate) }}%</td>
+          <td class="num {{ 'pos' if d.net_pnl_usd >= 0 else 'neg' }}" style="font-weight: 700;">${{ "%+.2f"|format(d.net_pnl_usd) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-  <div class="empty-state">No history yet.</div>
+  <div class="panel empty-state">No history yet.</div>
   {% endif %}
 </section>
 
@@ -89,27 +91,40 @@ document.addEventListener('DOMContentLoaded', function() {
           datasets: [{
             label: 'Cumulative P&L',
             data: cumulative,
-            borderColor: cumulative[cumulative.length-1] >= 0 ? '#4fcf8f' : '#ff6b6b',
+            borderColor: cumulative[cumulative.length-1] >= 0 ? '#3fb950' : '#f85149',
             backgroundColor: cumulative[cumulative.length-1] >= 0
-              ? 'rgba(79,207,143,0.1)'
-              : 'rgba(255,107,107,0.1)',
-            borderWidth: 2,
-            pointRadius: 0,
+              ? 'rgba(63, 185, 80, 0.1)'
+              : 'rgba(248, 81, 73, 0.1)',
+            borderWidth: 3,
+            pointRadius: 2,
+            pointBackgroundColor: cumulative[cumulative.length-1] >= 0 ? '#3fb950' : '#f85149',
             tension: 0.3,
             fill: true,
           }]
         },
         options: {
           responsive: true,
+          maintainAspectRatio: false,
           scales: {
-            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#30363d' } },
+            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#2d333b' } },
             y: {
               ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(0) },
-              grid: { color: '#30363d' },
+              grid: { color: '#2d333b' },
             }
           },
           plugins: {
-            legend: { display: false }
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#151921',
+              titleColor: '#8b949e',
+              bodyColor: '#f0f6fc',
+              borderColor: '#2d333b',
+              borderWidth: 1,
+              displayColors: false,
+              callbacks: {
+                label: (ctx) => 'Net P&L: $' + ctx.parsed.y.toFixed(2)
+              }
+            }
           }
         }
       });

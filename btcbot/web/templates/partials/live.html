@@ -22,8 +22,11 @@
     <div class="panel">
       <div class="label">Active Market</div>
       {% if market %}
-      <div class="value mono" style="font-size:14px">{{ market.slug|replace("btc-updown-5m-", "") }}</div>
-      <div class="sub">{{ "%.0f"|format(market_remaining) }}s remaining</div>
+      <div class="value mono" style="font-size:16px">{{ market.slug|replace("btc-updown-5m-", "") }}</div>
+      <div class="sub">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        {{ "%.0f"|format(market_remaining) }}s remaining
+      </div>
       <div class="progress-bar">
         {% set pct = ((300 - market_remaining) / 300 * 100)|int %}
         {% if pct > 80 %}
@@ -44,14 +47,14 @@
     <div class="panel">
       <div class="label">Last Signal</div>
       {% if signal and signal.strength > 0 %}
-      <div class="flex">
+      <div class="flex" style="align-items: baseline;">
         <span class="badge {{ signal.direction|lower }}">{{ signal.direction }}</span>
-        <span class="value mono" style="font-size:18px">{{ "%.0f"|format(signal.strength * 100) }}%</span>
+        <span class="value mono" style="font-size:22px; margin-left: auto;">{{ "%.0f"|format(signal.strength * 100) }}%</span>
       </div>
       <div class="sub">edge={{ "%+.1f"|format(signal.edge * 100) }}% · fair={{ "%.3f"|format(signal.fair_prob) }}</div>
       {% else %}
       <div class="value muted">—</div>
-      <div class="sub">No signal</div>
+      <div class="sub">No active signal</div>
       {% endif %}
     </div>
 
@@ -59,11 +62,11 @@
     <div class="panel">
       <div class="label">Open Position</div>
       {% if position %}
-      <div class="flex">
+      <div class="flex" style="align-items: baseline;">
         <span class="badge {{ position.direction|lower }}">{{ position.direction }}</span>
-        <span class="value mono" style="font-size:18px">${{ "%.2f"|format(position.fill_price * position.token_quantity) }}</span>
+        <span class="value mono" style="font-size:22px; margin-left: auto;">${{ "%.2f"|format(position.fill_price * position.token_quantity) }}</span>
       </div>
-      <div class="sub">@ ${{ "%.3f"|format(position.fill_price) }} × {{ "%.1f"|format(position.token_quantity) }} tokens</div>
+      <div class="sub">@ ${{ "%.3f"|format(position.fill_price) }} × {{ "%.1f"|format(position.token_quantity) }}</div>
       {% else %}
       <div class="value muted">—</div>
       <div class="sub">No open position</div>
@@ -88,21 +91,21 @@
       <span class="value">${{ "{:,.2f}".format(market_start_price) }}</span>
     </div>
     <div class="field">
-      <span class="label">Delta</span>
+      <span class="label">Current Delta</span>
       {% set delta = (btc_price or 0) - market_start_price %}
       <span class="value {{ 'pos' if delta >= 0 else 'neg' }}">${{ "%+.2f"|format(delta) }}</span>
     </div>
     {% endif %}
     <div class="grow"></div>
     <div class="field">
-      <span class="label">Status</span>
-      <span class="flex">
+      <span class="label">Bot Status</span>
+      <div class="flex" style="margin-top: 4px;">
         {% if engine_running %}
-        <span class="pulse green"></span> <span style="color:var(--pos)">Running</span>
+        <span class="pulse green"></span> <span style="font-weight: 600; font-size: 13px; color:var(--pos)">LIVE ENGINE</span>
         {% else %}
-        <span class="pulse gray"></span> <span class="muted">Stopped</span>
+        <span class="pulse gray"></span> <span class="muted" style="font-weight: 600; font-size: 13px;">OFFLINE</span>
         {% endif %}
-      </span>
+      </div>
     </div>
   </div>
   {% endif %}
@@ -112,20 +115,20 @@
 <section>
   <div class="stats-row">
     <div class="stat">
-      <div class="label">Total P&amp;L</div>
+      <div class="label">Total Net P&amp;L</div>
       <div class="value {{ 'pos' if total_pnl >= 0 else 'neg' }}">${{ "%+.2f"|format(total_pnl) }}</div>
     </div>
     <div class="stat">
-      <div class="label">Today P&amp;L</div>
+      <div class="label">Daily P&amp;L</div>
       <div class="value {{ 'pos' if daily_pnl >= 0 else 'neg' }}">${{ "%+.2f"|format(daily_pnl) }}</div>
     </div>
     <div class="stat">
-      <div class="label">Trades Today</div>
+      <div class="label">Trades (24h)</div>
       <div class="value">{{ trades_today }}</div>
     </div>
     <div class="stat">
       <div class="label">Win Rate</div>
-      <div class="value">{{ "%.0f"|format(win_rate) }}%</div>
+      <div class="value" style="color: var(--accent)">{{ "%.0f"|format(win_rate) }}%</div>
     </div>
     <div class="stat">
       <div class="label">Consec. Losses</div>

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}btcbot{% endblock %}</title>
   <link rel="icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css">
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1" defer></script>
@@ -12,8 +15,10 @@
 <body>
   <header class="top">
     <div class="flex">
-      <a class="brand" href="/">btcbot
-        <span class="mode {{ 'paper' if paper_mode else 'live' }}">{{ 'PAPER' if paper_mode else 'LIVE' }}</span>
+      <a class="brand" href="/">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent)"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+        <span>btcbot</span>
+        <span class="mode {{ 'paper' if paper_mode else 'live' }}">{{ 'Paper' if paper_mode else 'Live' }}</span>
       </a>
     </div>
     <nav>
