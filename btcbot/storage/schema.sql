@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS market_results (
     payout_usd      REAL NOT NULL DEFAULT 0,
     net_pnl_usd     REAL NOT NULL DEFAULT 0,
     outcome_correct INTEGER,
-    resolved_at     INTEGER
+    resolved_at     INTEGER,
+    redeemed_at     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS daily_pnl (

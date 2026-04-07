@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from .config import CONFIG
 from .models import Market, OpenPosition, Signal, TradeRecord
 
 log = logging.getLogger(__name__)
+
+_NOT_REDEEMED_LOG = Path("notRedeemed.log")
+
+
+def _log_unredeemed(msg: str) -> None:
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _NOT_REDEEMED_LOG.open("a") as f:
+        f.write(f"{ts}  {msg}\n")
 
 
 def _build_clob_client() -> Any:
@@ -153,25 +163,28 @@ class Executor:
 
         return None
 
-    async def redeem(self, condition_id: str, max_retries: int = 5) -> str | None:
+    async def redeem(self, condition_id: str) -> str | None:
         """Redeem winning conditional tokens for USDC on-chain.
 
         Retries with backoff since the on-chain oracle may not have resolved
         the market yet when the bot detects the outcome.
         """
-        for attempt in range(max_retries):
+        delays = [120, 150, 180, 120, 150, 180, 120, 150, 180]
+        for delay in delays:
+            await asyncio.sleep(delay)
             try:
                 tx_hash = await asyncio.to_thread(self._redeem_sync, condition_id)
                 log.info("Redeemed %s — tx: %s", condition_id[:18], tx_hash)
                 return tx_hash
             except Exception as e:
-                if "not received yet" in str(e) and attempt < max_retries - 1:
-                    delay = 30 * (attempt + 1)
+                if "not received yet" in str(e):
                     log.info("Oracle not ready for %s — retrying in %ds", condition_id[:18], delay)
-                    await asyncio.sleep(delay)
                 else:
                     log.warning("Redemption failed for %s", condition_id[:18], exc_info=True)
                     return None
+        msg = f"{condition_id} — gave up after all retries"
+        log.warning("Redemption gave up for %s after all retries", condition_id[:18])
+        _log_unredeemed(msg)
         return None
 
     def _redeem_sync(self, condition_id: str) -> str:

@@ -184,9 +184,14 @@ class Engine:
 
     async def _switch_market(self, market: Market) -> None:
         """Transition to a new 5-minute market window."""
-        # Resolve previous position if any
+        # Resolve previous position in background (oracle polling can be slow)
         if self._position and self._current_market:
-            await self._resolve_position()
+            pos = self._position
+            mkt = self._current_market
+            self._position = None
+            asyncio.create_task(
+                self._resolve_position(pos, mkt), name=f"resolve-{mkt.slug}"
+            )
 
         log.info(
             "New market: %s (ends in %.0fs)",
@@ -217,27 +222,49 @@ class Engine:
             except Exception:
                 pass
 
-    async def _resolve_position(self) -> None:
-        """Resolve the current position based on BTC price at window end."""
-        pos = self._position
-        mkt = self._current_market
+    async def _fetch_oracle_outcome(self, slug: str) -> str | None:
+        """Poll the Gamma API for the oracle-resolved outcome."""
+        import json as _json
+
+        for attempt in range(80):
+            try:
+                resp = await self._http_client.get(
+                    f"{CONFIG.gamma_api_base}/events",
+                    params={"slug": slug},
+                    timeout=10.0,
+                )
+                data = resp.json()
+                if not data:
+                    continue
+                event = data[0] if isinstance(data, list) else data
+                market = event.get("markets", [{}])[0]
+                outcomes = market.get("outcomes", [])
+                prices = market.get("outcomePrices", [])
+                if isinstance(outcomes, str):
+                    outcomes = _json.loads(outcomes)
+                if isinstance(prices, str):
+                    prices = _json.loads(prices)
+                if "1" in prices:
+                    winner = outcomes[prices.index("1")]
+                    return winner.upper()
+            except Exception:
+                pass
+            await asyncio.sleep(15)
+        return None
+
+    async def _resolve_position(self, pos: OpenPosition | None = None, mkt: Market | None = None) -> None:
+        """Resolve the current position using the Polymarket oracle outcome."""
+        pos = pos or self._position
+        mkt = mkt or self._current_market
         if not pos or not mkt:
             return
 
-        btc_end = self._binance.latest_price
-        start_row = None
-        try:
-            async with connect() as conn:
-                start_row = await get_market(conn, mkt.slug)
-        except Exception:
-            pass
-
-        btc_start = start_row.start_btc_price if start_row else None
-        if btc_start is None:
-            log.warning("No start BTC price for %s — cannot resolve", mkt.slug)
+        outcome = await self._fetch_oracle_outcome(mkt.slug)
+        if outcome is None:
+            log.warning("Could not fetch oracle outcome for %s — skipping resolution", mkt.slug)
             return
 
-        outcome = "UP" if btc_end >= btc_start else "DOWN"
+        btc_end = self._binance.latest_price
         won = pos.direction == outcome
 
         # Calculate P&L
@@ -257,7 +284,8 @@ class Engine:
             # Auto-redeem winning tokens in live mode (background — oracle may lag)
             if not self._paper_mode and hasattr(self._executor, "redeem"):
                 asyncio.create_task(
-                    self._executor.redeem(mkt.condition_id), name=f"redeem-{mkt.slug}"
+                    self._redeem_and_mark(mkt.slug, mkt.condition_id),
+                    name=f"redeem-{mkt.slug}",
                 )
         else:
             self._risk.record_loss(net_pnl)
@@ -303,7 +331,19 @@ class Engine:
         except Exception:
             log.warning("Failed to persist resolution", exc_info=True)
 
-        self._position = None
+    async def _redeem_and_mark(self, slug: str, condition_id: str) -> None:
+        """Redeem tokens and mark the result as redeemed in the DB."""
+        tx_hash = await self._executor.redeem(condition_id)
+        if tx_hash:
+            try:
+                async with connect() as conn:
+                    await conn.execute(
+                        "UPDATE market_results SET redeemed_at = ? WHERE market_slug = ?",
+                        (int(time.time()), slug),
+                    )
+                    await conn.commit()
+            except Exception:
+                log.warning("Failed to mark %s as redeemed", slug, exc_info=True)
 
     # ── Trading loop ───────────────────────────────────────────────────
 
