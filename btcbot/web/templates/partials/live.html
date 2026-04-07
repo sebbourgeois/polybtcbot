@@ -80,10 +80,16 @@
     <div class="field">
       <span class="label">Up Price</span>
       <span class="value up">{{ "%.3f"|format(poly_up) if poly_up else "—" }}</span>
+      {% if position and position.direction == "UP" %}
+      <span class="sub">entry {{ "%.3f"|format(position.fill_price) }}</span>
+      {% endif %}
     </div>
     <div class="field">
       <span class="label">Down Price</span>
       <span class="value down">{{ "%.3f"|format(poly_down) if poly_down else "—" }}</span>
+      {% if position and position.direction == "DOWN" %}
+      <span class="sub">entry {{ "%.3f"|format(position.fill_price) }}</span>
+      {% endif %}
     </div>
     {% if market_start_price %}
     <div class="field">

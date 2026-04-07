@@ -21,20 +21,27 @@ class SignalGenerator:
     def __init__(self) -> None:
         self._btc_prices: deque[tuple[float, float]] = deque(maxlen=3000)
         self._market_start_price: float | None = None
+        self._chainlink_price: float = 0.0
+        self._chainlink_start_price: float | None = None
         self._market: Market | None = None
 
     def reset(self, market: Market) -> None:
         """Called when switching to a new 5-minute market."""
         self._btc_prices.clear()
         self._market_start_price = None
+        self._chainlink_start_price = None
         self._market = market
 
     def update_btc_price(self, price: float, ts: float) -> None:
         self._btc_prices.append((ts, price))
         if self._market_start_price is None and self._market:
-            # Set the start price once we see the first tick in this window
             if ts >= self._market.start_ts:
                 self._market_start_price = price
+
+    def update_chainlink_price(self, price: float, ts: float) -> None:
+        self._chainlink_price = price
+        if self._chainlink_start_price is None and self._market:
+            self._chainlink_start_price = price
 
     def evaluate(
         self,
@@ -54,12 +61,14 @@ class SignalGenerator:
         if poly_up_price is None or poly_down_price is None:
             return _null_signal("No Polymarket prices")
 
-        # Can't evaluate without knowing the market start price
+        # Need both Chainlink and Binance start prices
+        if self._chainlink_start_price is None or self._chainlink_price <= 0:
+            return _null_signal("No Chainlink price yet")
         if self._market_start_price is None:
             return _null_signal("No market start price yet")
 
-        # 1. BTC delta from market start
-        price_delta = btc_price - self._market_start_price
+        # 1. BTC delta from market start — use CHAINLINK (matches oracle)
+        price_delta = self._chainlink_price - self._chainlink_start_price
 
         # 2. Momentum over multiple timeframes
         mom_5s = self._calc_momentum(5.0)

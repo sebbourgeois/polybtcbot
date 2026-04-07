@@ -11,6 +11,7 @@ import httpx
 
 from .config import CONFIG
 from .feeds.binance_ws import BinanceFeed
+from .feeds.chainlink import ChainlinkFeed
 from .feeds.polymarket_ws import PolymarketFeed
 from .market_discovery import discover_active_market
 from .models import Market, OpenPosition, TradeRecord
@@ -46,6 +47,7 @@ class Engine:
 
         # Components
         self._binance = BinanceFeed(on_price=self._on_btc_price)
+        self._chainlink = ChainlinkFeed(on_price=self._on_chainlink_price)
         self._polymarket = PolymarketFeed(on_price=self._on_poly_price)
         self._signal_gen = SignalGenerator()
         self._risk = RiskManager()
@@ -81,14 +83,17 @@ class Engine:
         try:
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self._binance.run(), name="binance_ws")
+                tg.create_task(self._chainlink.run(), name="chainlink")
                 tg.create_task(self._polymarket.run(), name="polymarket_ws")
                 tg.create_task(self._discovery_loop(), name="discovery")
                 tg.create_task(self._trading_loop(), name="trading")
                 tg.create_task(self._risk_monitor_loop(), name="risk")
+                tg.create_task(self._sweep_unresolved_loop(), name="sweep")
         except* KeyboardInterrupt:
             log.info("Keyboard interrupt — shutting down")
         finally:
             await self._binance.stop()
+            await self._chainlink.stop()
             await self._polymarket.stop()
             if self._http_client:
                 await self._http_client.aclose()
@@ -152,6 +157,11 @@ class Engine:
             except Exception:
                 pass
 
+    async def _on_chainlink_price(self, price: float, ts: float) -> None:
+        """Called on every Chainlink update — this is the oracle's price source."""
+        self._signal_gen.update_chainlink_price(price, ts)
+        self._price_event.set()
+
     async def _on_poly_price(self, token_id: str, price: float) -> None:
         """Called on every Polymarket price update."""
         self._price_event.set()
@@ -212,13 +222,12 @@ class Engine:
         except Exception:
             log.warning("Failed to persist market", exc_info=True)
 
-        # Record market start price once we have BTC data
-        if self._binance.latest_price > 0:
+        # Record market start price (prefer Chainlink since it matches the oracle)
+        start_price = self._chainlink.latest_price or self._binance.latest_price
+        if start_price > 0:
             try:
                 async with connect() as conn:
-                    await set_market_start_price(
-                        conn, market.slug, self._binance.latest_price
-                    )
+                    await set_market_start_price(conn, market.slug, start_price)
             except Exception:
                 pass
 
@@ -443,6 +452,81 @@ class Engine:
                             hedge.fill_price,
                         )
             await _sleep_or_stop(self._stop, CONFIG.risk_check_interval_sec)
+
+    # ── Unresolved sweep loop ────────────────────────────────────────
+
+    async def _sweep_unresolved_loop(self) -> None:
+        """Periodically resolve markets that the background task missed."""
+        import json as _json
+
+        while not self._stop.is_set():
+            await _sleep_or_stop(self._stop, 300)  # every 5 minutes
+            try:
+                async with connect() as conn:
+                    # Find trades with no market_result yet, for markets that ended >5min ago
+                    cutoff = int(time.time()) - 300
+                    cur = await conn.execute(
+                        """SELECT DISTINCT t.market_slug, m.condition_id, t.direction,
+                                  t.fill_price, t.token_quantity
+                           FROM trades t
+                           JOIN markets m ON m.slug = t.market_slug
+                           LEFT JOIN market_results mr ON mr.market_slug = m.slug
+                           WHERE t.is_paper = 0 AND t.trade_type = 'ENTRY'
+                             AND m.outcome IS NULL
+                             AND m.end_ts < ?
+                             AND mr.market_slug IS NULL""",
+                        (cutoff,),
+                    )
+                    rows = await cur.fetchall()
+
+                if not rows:
+                    continue
+
+                log.info("Sweep: found %d unresolved market(s)", len(rows))
+
+                for row in rows:
+                    slug, condition_id, direction, fill_price, qty = (
+                        row[0], row[1], row[2], row[3], row[4],
+                    )
+                    outcome = await self._fetch_oracle_outcome(slug)
+                    if not outcome:
+                        continue
+
+                    won = direction == outcome
+                    payout = qty if won else 0.0
+                    entry_cost = fill_price * qty
+                    net_pnl = payout - entry_cost
+
+                    log.info(
+                        "Sweep resolved %s: %s (bet %s) — PnL=$%+.2f",
+                        slug, outcome, direction, net_pnl,
+                    )
+
+                    if won:
+                        self._risk.record_win(net_pnl)
+                    else:
+                        self._risk.record_loss(net_pnl)
+
+                    async with connect() as conn:
+                        await set_market_outcome(conn, slug, outcome, 0.0)
+                        await upsert_result(
+                            conn, slug,
+                            entry_cost=entry_cost,
+                            hedge_cost=0.0,
+                            payout=payout,
+                            net_pnl=net_pnl,
+                            outcome_correct=1 if won else 0,
+                        )
+
+                    # Auto-redeem if won in live mode
+                    if won and not self._paper_mode and hasattr(self._executor, "redeem"):
+                        asyncio.create_task(
+                            self._redeem_and_mark(slug, condition_id),
+                            name=f"redeem-sweep-{slug}",
+                        )
+
+            except Exception:
+                log.warning("Sweep error", exc_info=True)
 
     # ── Shutdown ───────────────────────────────────────────────────────
 
