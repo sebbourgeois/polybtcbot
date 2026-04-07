@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def _env_str(name: str, default: str) -> str:
     return os.environ.get(name, default)
@@ -106,4 +110,14 @@ def load_config() -> Config:
     )
 
 
-CONFIG = load_config()
+_CONFIG: Config | None = None
+
+
+def __getattr__(name: str):
+    """Lazy-load CONFIG on first access so CLI flags and env vars are set."""
+    global _CONFIG
+    if name == "CONFIG":
+        if _CONFIG is None:
+            _CONFIG = load_config()
+        return _CONFIG
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

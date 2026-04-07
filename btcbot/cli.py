@@ -28,6 +28,9 @@ def run(
 ) -> None:
     """Start the trading bot headless (no dashboard)."""
     _setup_logging(verbose)
+    import os
+
+    os.environ["BOT_PAPER_MODE"] = "true" if paper else "false"
     from .engine import Engine
 
     engine = Engine(paper_mode=paper)
@@ -50,11 +53,11 @@ def serve(
     import os
     import uvicorn
 
-    from .config import CONFIG
+    # Uvicorn reloads the app module from scratch, so pass paper mode via env
+    # var — must be set before CONFIG import triggers lazy load_config().
+    os.environ["BOT_PAPER_MODE"] = "true" if paper else "false"
 
-    # Pass paper mode to the engine via env var so the app lifespan picks it up
-    if not paper:
-        os.environ["BOT_PAPER_MODE"] = "false"
+    from .config import CONFIG
 
     uvicorn.run(
         "btcbot.web.app:app",
