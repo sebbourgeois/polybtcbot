@@ -2,6 +2,7 @@
 
 import sqlite3
 import sys
+import time
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -40,32 +41,43 @@ ctf = w3.eth.contract(address=CTF, abi=CTF_ABI)
 nonce = w3.eth.get_transaction_count(account.address)
 
 
-def find_redeemable_markets() -> list[tuple[str, str]]:
-    """Return (slug, condition_id) for won live markets."""
+def find_unredeemed_wins() -> list[tuple[str, str]]:
+    """Return (slug, condition_id) for won live markets not yet redeemed."""
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
         """
-        SELECT DISTINCT t.market_slug, m.condition_id, t.direction, m.outcome
+        SELECT DISTINCT t.market_slug, m.condition_id
         FROM trades t
         JOIN markets m ON t.market_slug = m.slug
+        JOIN market_results mr ON mr.market_slug = m.slug
         WHERE t.trade_type = 'ENTRY'
           AND t.is_paper = 0
           AND m.outcome IS NOT NULL
           AND t.direction = m.outcome
+          AND mr.outcome_correct = 1
+          AND mr.redeemed_at IS NULL
         """,
     ).fetchall()
     conn.close()
     return [(r[0], r[1]) for r in rows]
 
 
+def mark_redeemed(slug: str) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "UPDATE market_results SET redeemed_at = ? WHERE market_slug = ?",
+        (int(time.time()), slug),
+    )
+    conn.commit()
+    conn.close()
+
+
 def redeem(slug: str, condition_id: str) -> str:
     global nonce
-    # Binary market: indexSets [1, 2] covers both outcome slots.
-    # The contract only pays out for the winning side.
     tx = ctf.functions.redeemPositions(
         USDC,
-        b"\x00" * 32,  # parentCollectionId (top-level)
-        bytes.fromhex(condition_id[2:]),  # strip 0x prefix
+        b"\x00" * 32,
+        bytes.fromhex(condition_id[2:]) if condition_id.startswith("0x") else bytes.fromhex(condition_id),
         [1, 2],
     ).build_transaction({"from": account.address, "nonce": nonce})
 
@@ -77,12 +89,12 @@ def redeem(slug: str, condition_id: str) -> str:
 
 
 def main():
-    markets = find_redeemable_markets()
+    markets = find_unredeemed_wins()
     if not markets:
-        print("No redeemable markets found.")
+        print("No unredeemed wins found.")
         sys.exit(0)
 
-    print(f"Found {len(markets)} winning market(s) to redeem:\n")
+    print(f"Found {len(markets)} unredeemed win(s):\n")
     for slug, cid in markets:
         print(f"  {slug}  {cid[:18]}...")
 
@@ -91,7 +103,8 @@ def main():
         print(f"Redeeming {slug}...")
         try:
             tx_hash = redeem(slug, cid)
-            print(f"  tx: {tx_hash}")
+            mark_redeemed(slug)
+            print(f"  tx: {tx_hash} (marked as redeemed)")
         except Exception as e:
             print(f"  FAILED: {e}")
 
