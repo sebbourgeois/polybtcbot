@@ -23,7 +23,7 @@ def _setup_logging(verbose: bool) -> None:
 
 @app.command()
 def run(
-    paper: bool = typer.Option(True, "--live/--paper", help="Paper (default) or live trading"),
+    paper: bool = typer.Option(True, "--paper/--live", help="Paper (default) or live trading"),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
 ) -> None:
     """Start the trading bot headless (no dashboard)."""
@@ -44,7 +44,7 @@ def run(
 def serve(
     host: str = typer.Option(None, help="Bind address (default from BOT_HOST)"),
     port: int = typer.Option(None, help="Port (default from BOT_PORT)"),
-    paper: bool = typer.Option(True, "--live/--paper", help="Paper (default) or live trading"),
+    paper: bool = typer.Option(True, "--paper/--live", help="Paper (default) or live trading"),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on file changes"),
 ) -> None:
