@@ -71,9 +71,11 @@ Before the bot can place orders, you must approve Polymarket's Exchange contract
 
 ```python
 from web3 import Web3
+from web3.middleware import ExtraDataToPOAMiddleware
 
-# Connect to Polygon
-w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+# Connect to Polygon (PoA chain — needs POA middleware)
+w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
 PRIVATE_KEY = "0xYOUR_PRIVATE_KEY"
 account = w3.eth.account.from_key(PRIVATE_KEY)
@@ -95,12 +97,16 @@ abi_1155 = [{"inputs":[{"name":"operator","type":"address"},{"name":"approved","
 usdc = w3.eth.contract(address=USDC, abi=abi)
 ctf  = w3.eth.contract(address=CTF, abi=abi_1155)
 
+nonce = w3.eth.get_transaction_count(account.address)
+
 def send_tx(tx):
-    tx["nonce"] = w3.eth.get_transaction_count(account.address)
-    tx["gas"] = 100_000
-    tx["gasPrice"] = w3.eth.gas_price
+    global nonce
+    tx["nonce"] = nonce
     signed = account.sign_transaction(tx)
-    return w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+    nonce += 1
+    return tx_hash.hex()
 
 # 1. Approve USDC on Exchange
 print("Approving USDC on Exchange...")
