@@ -35,3 +35,7 @@ htmlcov/
 
 # mypy / type checkers
 .mypy_cache/
+
+# MISC
+check.py
+CLAUDE.md
