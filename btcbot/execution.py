@@ -153,6 +153,64 @@ class Executor:
 
         return None
 
+    async def redeem(self, condition_id: str, max_retries: int = 5) -> str | None:
+        """Redeem winning conditional tokens for USDC on-chain.
+
+        Retries with backoff since the on-chain oracle may not have resolved
+        the market yet when the bot detects the outcome.
+        """
+        for attempt in range(max_retries):
+            try:
+                tx_hash = await asyncio.to_thread(self._redeem_sync, condition_id)
+                log.info("Redeemed %s — tx: %s", condition_id[:18], tx_hash)
+                return tx_hash
+            except Exception as e:
+                if "not received yet" in str(e) and attempt < max_retries - 1:
+                    delay = 30 * (attempt + 1)
+                    log.info("Oracle not ready for %s — retrying in %ds", condition_id[:18], delay)
+                    await asyncio.sleep(delay)
+                else:
+                    log.warning("Redemption failed for %s", condition_id[:18], exc_info=True)
+                    return None
+        return None
+
+    def _redeem_sync(self, condition_id: str) -> str:
+        """Synchronous on-chain redemption (runs in thread)."""
+        from web3 import Web3
+        from web3.middleware import ExtraDataToPOAMiddleware
+
+        w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        account = w3.eth.account.from_key(CONFIG.private_key)
+
+        USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        CTF = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+
+        abi = [{
+            "inputs": [
+                {"name": "collateralToken", "type": "address"},
+                {"name": "parentCollectionId", "type": "bytes32"},
+                {"name": "conditionId", "type": "bytes32"},
+                {"name": "indexSets", "type": "uint256[]"},
+            ],
+            "name": "redeemPositions",
+            "outputs": [],
+            "type": "function",
+        }]
+
+        ctf = w3.eth.contract(address=CTF, abi=abi)
+        tx = ctf.functions.redeemPositions(
+            USDC,
+            b"\x00" * 32,
+            bytes.fromhex(condition_id[2:]) if condition_id.startswith("0x") else bytes.fromhex(condition_id),
+            [1, 2],
+        ).build_transaction({"from": account.address, "nonce": w3.eth.get_transaction_count(account.address)})
+
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        w3.eth.wait_for_transaction_receipt(tx_hash)
+        return tx_hash.hex()
+
     def _fok_buy(self, token_id: str, amount_usd: float) -> dict | None:
         """Synchronous FOK market buy (runs in thread)."""
         from py_clob_client.clob_types import MarketOrderArgs, OrderType

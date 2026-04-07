@@ -254,6 +254,11 @@ class Engine:
         # Update risk manager
         if won:
             self._risk.record_win(net_pnl)
+            # Auto-redeem winning tokens in live mode (background — oracle may lag)
+            if not self._paper_mode and hasattr(self._executor, "redeem"):
+                asyncio.create_task(
+                    self._executor.redeem(mkt.condition_id), name=f"redeem-{mkt.slug}"
+                )
         else:
             self._risk.record_loss(net_pnl)
 
