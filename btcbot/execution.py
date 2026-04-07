@@ -160,6 +160,7 @@ class Executor:
         args = MarketOrderArgs(
             token_id=token_id,
             amount=amount_usd,
+            side="BUY",
         )
         signed = self._client.create_market_order(args)
         return self._client.post_order(signed, OrderType.FOK)
@@ -177,6 +178,7 @@ class Executor:
             token_id=token_id,
             price=price,
             size=size,
+            side="BUY",
         )
         signed = self._client.create_order(args)
         return self._client.post_order(signed, OrderType.GTC)
