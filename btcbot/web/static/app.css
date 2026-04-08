@@ -1,3 +1,19 @@
+/* ── Self-hosted fonts ───────────────────────────────────────────── */
+@font-face {
+  font-family: 'Inter';
+  src: url('/static/fonts/inter.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/static/fonts/jetbrains-mono.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
 /* ── Design tokens ───────────────────────────────────────────────── */
 :root {
   --bg:      #0b0e14;
