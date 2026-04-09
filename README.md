@@ -43,13 +43,14 @@ Polymarket WS -- odds -> |  -> risk  |
                          +-----------+
 ```
 
-The bot runs **5 concurrent async tasks**: two WebSocket feeds (Binance + Polymarket), market discovery, signal evaluation, and risk monitoring — all coordinated via `asyncio.TaskGroup`.
+The bot runs **5 concurrent async tasks**: two WebSocket feeds (Binance + Polymarket), market discovery, signal evaluation, and risk monitoring — all coordinated via `asyncio.TaskGroup`. A **regime detector** continuously adapts the strategy based on whether the market is trending or choppy.
 
 ### Features
 
 - **Real-time feeds** — Binance BTC/USDT WebSocket (~100ms) + Polymarket CLOB odds stream
-- **Signal engine** — Sigmoid probability model comparing BTC momentum vs market odds
-- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, auto-hedging
+- **Signal engine** — Sigmoid probability model comparing BTC momentum vs market odds, with regime-aware confidence scaling
+- **Regime detection** — Tracks intra-window reversal rate to adapt strategy between trending and mean-reverting markets
+- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, auto-hedging with dynamic thresholds
 - **Live dashboard** — Dark-themed UI with auto-refreshing panels, trade log, and Chart.js equity curves
 - **Paper trading** — Full simulation with realistic spread modeling, same DB schema as live
 - **CLI tools** — `serve`, `run`, `status`, `history`, `initdb`
@@ -86,22 +87,35 @@ Open [http://localhost:8500](http://localhost:8500) — the dashboard shows live
 
 On every BTC price tick, the signal engine:
 
-1. Computes the **price delta** from the window's start price
+1. Computes the **price delta** from the window's start price (via Chainlink, matching the oracle)
 2. Measures **momentum** over 5s, 15s, and 30s windows
 3. Estimates a **fair probability** of "Up" resolving via a sigmoid model, normalized by expected 5-minute BTC volatility
 4. Compares the fair probability against **Polymarket's implied odds**
 5. Fires a trade signal when `edge > 5%` AND `strength > 0.30`
 
+The fair probability is clamped dynamically based on the current **regime choppiness** score — tighter in mean-reverting markets (max 65%) to prevent overconfident bets that reverse.
+
+### Regime Detection
+
+The bot tracks a rolling window of the last 20 markets and measures how often the first-half momentum reversed by close. This produces a **choppiness score** (0.0 = trending, 1.0 = always reversing) that adapts 4 parameters in real-time:
+
+| Parameter | Trending (0.0) | Choppy (1.0) |
+|---|---|---|
+| Fair prob clamp | 0.80 | 0.65 |
+| Warmup period | 30s | 90s |
+| Position size | 100% Kelly | 40% Kelly |
+| Hedge threshold | 15% drop | 8% drop |
+
 ### Risk Controls
 
 | Control | Default | What it does |
 |---|---|---|
-| Position sizing | Quarter-Kelly | Sizes bets based on edge magnitude |
+| Position sizing | Quarter-Kelly | Sizes bets based on edge magnitude, scaled by regime |
 | Max per trade | $25 | Caps any single bet |
 | Daily stop-loss | $50 | Halts trading for the day |
 | Consecutive losses | 5 | Pauses after 5 straight losses |
 | Price cap | $0.65 | Never pays more than 65¢ per token |
-| Hedge trigger | 15% drop | Buys opposite side to cap losses |
+| Hedge trigger | 15% drop | Buys opposite side to cap losses (8% in choppy markets) |
 
 ### How Hedging Works
 
@@ -175,6 +189,12 @@ cp .env.example .env
 | `BOT_MAX_PRICE_TO_PAY` | `0.65` | Max token price to buy |
 | `BOT_HEDGE_TRIGGER` | `0.15` | Hedge when token drops 15% |
 
+### Regime Detection
+
+| Variable | Default | Description |
+|---|---|---|
+| `BOT_REGIME_WINDOW` | `20` | Number of recent markets to track for choppiness |
+
 ### Timing
 
 | Variable | Default | Description |
@@ -225,12 +245,13 @@ btcbot initdb                                        # Create SQLite database
 
 ```
 btcbot/
-├── config.py              # 28 settings via BOT_ env vars
+├── config.py              # 29 settings via BOT_ env vars
 ├── cli.py                 # Typer CLI: serve, run, status, history, initdb
 ├── models.py              # Market, Signal, TradeRecord, OpenPosition
 ├── engine.py              # 5 concurrent async tasks (TaskGroup)
-├── signal.py              # Sigmoid probability model
-├── risk.py                # Kelly sizing + safety limits
+├── signal.py              # Sigmoid probability model with regime-aware clamping
+├── risk.py                # Kelly sizing + safety limits + dynamic hedge threshold
+├── regime.py              # Regime detector — trending vs mean-reverting classification
 ├── execution.py           # py-clob-client order placement
 ├── paper.py               # Simulated executor
 ├── market_discovery.py    # Gamma API polling
