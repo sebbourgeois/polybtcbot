@@ -44,8 +44,8 @@ class TestSigmoid:
 
 
 class TestSignalGenerator:
-    def test_no_market_start_price(self, gen: SignalGenerator, market: Market):
-        # No BTC prices fed yet — should return null signal
+    def test_no_chainlink_price(self, gen: SignalGenerator, market: Market):
+        # No prices fed yet — should return null signal
         sig = gen.evaluate(
             btc_price=50000,
             poly_up_price=0.50,
@@ -53,7 +53,7 @@ class TestSignalGenerator:
             time_remaining_sec=150,
         )
         assert sig.strength == 0.0
-        assert "No market start price" in sig.reason
+        assert "No Chainlink price" in sig.reason
 
     def test_no_poly_prices(self, gen: SignalGenerator, market: Market):
         gen.update_btc_price(50000, market.start_ts + 1)
@@ -69,8 +69,10 @@ class TestSignalGenerator:
         # Feed prices showing BTC going up
         base = 50000
         t = market.start_ts
+        gen.update_chainlink_price(base, t)
         for i in range(30):
             gen.update_btc_price(base + i * 2, t + i)
+        gen.update_chainlink_price(base + 60, t + 30)
 
         sig = gen.evaluate(
             btc_price=base + 60,
@@ -85,8 +87,10 @@ class TestSignalGenerator:
     def test_btc_down_detects_down(self, gen: SignalGenerator, market: Market):
         base = 50000
         t = market.start_ts
+        gen.update_chainlink_price(base, t)
         for i in range(30):
             gen.update_btc_price(base - i * 2, t + i)
+        gen.update_chainlink_price(base - 60, t + 30)
 
         sig = gen.evaluate(
             btc_price=base - 60,
@@ -100,8 +104,10 @@ class TestSignalGenerator:
     def test_no_edge_when_market_correct(self, gen: SignalGenerator, market: Market):
         base = 50000
         t = market.start_ts
+        gen.update_chainlink_price(base, t)
         for i in range(30):
             gen.update_btc_price(base + i * 2, t + i)
+        gen.update_chainlink_price(base + 60, t + 30)
 
         sig = gen.evaluate(
             btc_price=base + 60,
@@ -117,6 +123,7 @@ class TestSignalGenerator:
         base = 50000
         t = market.start_ts
         gen.update_btc_price(base, t + 1)
+        gen.update_chainlink_price(base, t + 1)
 
         sig = gen.evaluate(
             btc_price=base + 100,
@@ -131,6 +138,7 @@ class TestSignalGenerator:
         base = 50000
         t = market.start_ts
         gen.update_btc_price(base, t + 1)
+        gen.update_chainlink_price(base, t + 1)
 
         sig = gen.evaluate(
             btc_price=base + 100,
@@ -144,6 +152,8 @@ class TestSignalGenerator:
         base = 50000
         t = market.start_ts
         gen.update_btc_price(base, t + 1)
+        gen.update_chainlink_price(base, t + 1)
+        gen.update_chainlink_price(base + 5000, t + 2)
 
         sig = gen.evaluate(
             btc_price=base + 5000,  # Massive move
@@ -152,4 +162,4 @@ class TestSignalGenerator:
             time_remaining_sec=150,
         )
         # Fair prob should be clamped, not 0.99+
-        assert sig.fair_prob <= 0.92
+        assert sig.fair_prob <= 0.80

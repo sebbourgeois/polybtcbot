@@ -46,6 +46,24 @@ class RiskManager:
                 LOSS_COOLDOWN_SEC // 60,
             )
 
+    def sync_streak(self, streak: int) -> None:
+        """Set consecutive losses from a DB-computed streak (chronological order).
+
+        This is immune to async resolution races — the DB query orders by
+        trade time, not resolution time.
+        """
+        self.consecutive_losses = streak
+        if streak >= CONFIG.max_consecutive_losses:
+            if self._loss_cooldown_until <= time.time():
+                self._loss_cooldown_until = time.time() + LOSS_COOLDOWN_SEC
+                log.warning(
+                    "%d consecutive losses — pausing for %dm",
+                    streak,
+                    LOSS_COOLDOWN_SEC // 60,
+                )
+        elif streak == 0:
+            self._loss_cooldown_until = 0.0
+
     def record_hedge(self, pnl: float) -> None:
         self.daily_pnl += pnl
 

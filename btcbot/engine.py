@@ -29,6 +29,7 @@ from .storage.repo import (
     save_open_position,
     set_market_outcome,
     set_market_start_price,
+    trailing_loss_streak,
     update_daily_pnl,
     upsert_market,
     upsert_result,
@@ -306,21 +307,16 @@ class Engine:
             mkt.slug, status, net_pnl, entry_cost, payout,
         )
 
-        # Update risk manager
-        if won:
-            self._risk.record_win(net_pnl)
-            # Auto-redeem winning tokens in live mode (background — oracle may lag)
-            if not self._paper_mode and hasattr(self._executor, "redeem"):
-                asyncio.create_task(
-                    self._redeem_and_mark(mkt.slug, mkt.condition_id),
-                    name=f"redeem-{mkt.slug}",
-                )
-        else:
-            self._risk.record_loss(net_pnl)
+        # Auto-redeem winning tokens in live mode (background — oracle may lag)
+        if won and not self._paper_mode and hasattr(self._executor, "redeem"):
+            asyncio.create_task(
+                self._redeem_and_mark(mkt.slug, mkt.condition_id),
+                name=f"redeem-{mkt.slug}",
+            )
 
         self._risk.open_positions.clear()
 
-        # Persist to DB
+        # Persist to DB, then sync risk manager from DB (immune to async race)
         try:
             async with connect() as conn:
                 await set_market_outcome(conn, mkt.slug, outcome, btc_end)
@@ -332,6 +328,11 @@ class Engine:
                     net_pnl=net_pnl,
                     outcome_correct=1 if won else 0,
                 )
+                # Sync consecutive losses from DB (chronological trade order)
+                self._risk.daily_pnl += net_pnl
+                streak = await trailing_loss_streak(conn)
+                self._risk.sync_streak(streak)
+
                 # Update daily P&L aggregate
                 today = datetime.date.today().isoformat()
                 today_ts = int(
@@ -541,11 +542,6 @@ class Engine:
                         slug, outcome, direction, net_pnl,
                     )
 
-                    if won:
-                        self._risk.record_win(net_pnl)
-                    else:
-                        self._risk.record_loss(net_pnl)
-
                     async with connect() as conn:
                         await set_market_outcome(conn, slug, outcome, 0.0)
                         await upsert_result(
@@ -556,6 +552,12 @@ class Engine:
                             net_pnl=net_pnl,
                             outcome_correct=1 if won else 0,
                         )
+
+                    # Sync risk manager from DB after all sweep writes
+                    self._risk.daily_pnl += net_pnl
+                    async with connect() as conn3:
+                        streak = await trailing_loss_streak(conn3)
+                        self._risk.sync_streak(streak)
 
                     # Auto-redeem if won in live mode
                     if won and not self._paper_mode and hasattr(self._executor, "redeem"):

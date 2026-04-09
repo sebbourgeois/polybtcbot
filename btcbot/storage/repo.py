@@ -216,6 +216,29 @@ async def win_loss_counts(
     return int(row[0]), int(row[1]), int(row[2])
 
 
+async def trailing_loss_streak(conn: aiosqlite.Connection) -> int:
+    """Count consecutive losses from the most recent ENTRY trades (by trade time).
+
+    Stops counting at the first win, so the result is the current trailing
+    loss streak in chronological order — immune to async resolution races.
+    """
+    cur = await conn.execute(
+        """SELECT mr.outcome_correct
+           FROM trades t
+           JOIN market_results mr ON mr.market_slug = t.market_slug
+           WHERE t.trade_type = 'ENTRY' AND mr.outcome_correct IS NOT NULL
+           ORDER BY t.created_at DESC
+           LIMIT 20""",
+    )
+    streak = 0
+    for row in await cur.fetchall():
+        if row[0] == 0:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 async def hourly_pnl(
     conn: aiosqlite.Connection, hours: int = 24
 ) -> list[dict]:
