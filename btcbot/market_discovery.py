@@ -28,16 +28,17 @@ _RETRY = dict(
 )
 
 
-def _window_end_ts(now: float | None = None) -> int:
-    """Compute the end timestamp of the current 5-minute window.
+def _window_start_ts(now: float | None = None) -> int:
+    """Compute the start timestamp of the current 5-minute window.
 
     Windows are aligned to Unix epoch modulo 300.
+    The slug uses the window start time, not the end.
     """
     t = int(now or time.time())
-    return t - (t % 300) + 300
+    return t - (t % 300)
 
 
-def _parse_market(event: dict, window_end_ts: int) -> Market | None:
+def _parse_market(event: dict, window_start_ts: int) -> Market | None:
     """Parse a Gamma event response into a Market."""
     markets = event.get("markets")
     if not markets:
@@ -67,16 +68,17 @@ def _parse_market(event: dict, window_end_ts: int) -> Market | None:
         log.warning("Expected 'Up'/'Down' outcomes, got %s", outcomes)
         return None
 
-    slug = event.get("slug", f"btc-updown-5m-{window_end_ts}")
+    slug = event.get("slug", f"btc-updown-5m-{window_start_ts}")
     condition_id = m.get("conditionId") or m.get("condition_id", "")
 
+    slug_ts = int(slug.split("-")[-1])
     return Market(
         slug=slug,
         condition_id=condition_id,
         up_token_id=token_ids[up_idx],
         down_token_id=token_ids[down_idx],
-        start_ts=window_end_ts - 300,
-        end_ts=window_end_ts,
+        start_ts=slug_ts,
+        end_ts=slug_ts + 300,
     )
 
 
@@ -110,14 +112,14 @@ async def discover_active_market(
         )
     try:
         now = time.time()
-        current_end = _window_end_ts(now)
+        current_start = _window_start_ts(now)
         # Try current window, then next
-        for end_ts in [current_end, current_end + 300]:
-            slug = f"btc-updown-5m-{end_ts}"
+        for start_ts in [current_start, current_start + 300]:
+            slug = f"btc-updown-5m-{start_ts}"
             try:
                 event = await _fetch_event(client, slug)
                 if event:
-                    market = _parse_market(event, end_ts)
+                    market = _parse_market(event, start_ts)
                     if market:
                         return market
             except Exception:

@@ -71,13 +71,6 @@ class SignalGenerator:
         # 1. BTC delta from market start — use CHAINLINK (matches oracle)
         price_delta = self._chainlink_price - self._chainlink_start_price
 
-        # Skip when BTC has moved too far — model is unreliable on large deltas
-        max_delta = CONFIG.btc_5m_volatility * 1.5  # ~$50 at default vol
-        if abs(price_delta) > max_delta:
-            return _null_signal(
-                f"Price delta too large: ${abs(price_delta):.2f} > ${max_delta:.2f}"
-            )
-
         # 2. Momentum over multiple timeframes
         mom_5s = self._calc_momentum(5.0)
         mom_15s = self._calc_momentum(15.0)
@@ -152,9 +145,8 @@ class SignalGenerator:
         momentum_extrapolation = blended_mom * time_remaining_sec * mom_weight
         z_mom = momentum_extrapolation / vol
 
-        # Combined z-score — momentum weight kept very low since delta alone
-        # is a better predictor (large-delta momentum trades historically lose)
-        combined_z = z_delta + 0.05 * z_mom
+        # Combined z-score
+        combined_z = z_delta + 0.3 * z_mom
 
         # Time factor: more time remaining → less confidence → gentler sigmoid
         # At t=300s remaining, scale ~0.5; at t=30s, scale ~2.0
