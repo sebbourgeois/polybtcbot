@@ -15,6 +15,7 @@ from .feeds.chainlink import ChainlinkFeed
 from .feeds.polymarket_ws import PolymarketFeed
 from .market_discovery import discover_active_market
 from .models import Market, OpenPosition, TradeRecord
+from .regime import RegimeDetector
 from .risk import RiskManager
 from .signal import SignalGenerator
 from .storage.db import connect, init_db
@@ -51,6 +52,7 @@ class Engine:
         self._polymarket = PolymarketFeed(on_price=self._on_poly_price)
         self._signal_gen = SignalGenerator()
         self._risk = RiskManager()
+        self._regime = RegimeDetector(window=CONFIG.regime_window)
 
         # Build executor
         if paper_mode:
@@ -67,6 +69,8 @@ class Engine:
         self._btc_price_sample_ts: float = 0.0
         self._last_discovery_market_slug: str = ""
         self._current_date: str = datetime.date.today().isoformat()
+        self._mid_window_price: float | None = None
+        self._mid_captured: bool = False
 
     async def run(self) -> None:
         """Main lifecycle. Initialises DB, then runs concurrent loops."""
@@ -162,6 +166,14 @@ class Engine:
         self._signal_gen.update_chainlink_price(price, ts)
         self._price_event.set()
 
+        # Capture mid-window price for regime detection (~150s into the window)
+        mkt = self._current_market
+        if mkt and not self._mid_captured:
+            elapsed = ts - mkt.start_ts
+            if elapsed >= 150:
+                self._mid_window_price = price
+                self._mid_captured = True
+
     async def _on_poly_price(self, token_id: str, price: float) -> None:
         """Called on every Polymarket price update."""
         self._price_event.set()
@@ -210,6 +222,8 @@ class Engine:
         )
         self._current_market = market
         self._position = None
+        self._mid_window_price = None
+        self._mid_captured = False
         self._signal_gen.reset(market)
 
         # Subscribe to the new tokens
@@ -275,6 +289,11 @@ class Engine:
 
         btc_end = self._binance.latest_price
         won = pos.direction == outcome
+
+        # Feed regime detector with reversal data
+        if self._mid_window_price is not None and self._signal_gen._chainlink_start_price is not None:
+            first_half_dir = "UP" if self._mid_window_price >= self._signal_gen._chainlink_start_price else "DOWN"
+            self._regime.record(first_half_dir, outcome)
 
         # Calculate P&L
         entry_cost = pos.fill_price * pos.token_quantity
@@ -379,6 +398,7 @@ class Engine:
                 poly_up_price=self._polymarket.get_price(market.up_token_id),
                 poly_down_price=self._polymarket.get_price(market.down_token_id),
                 time_remaining_sec=market.seconds_remaining,
+                choppiness=self._regime.choppiness,
             )
 
             if signal.strength < CONFIG.min_signal_strength:
@@ -388,7 +408,7 @@ class Engine:
                 continue
 
             # Place trade
-            amount = self._risk.calc_position_size(signal)
+            amount = self._risk.calc_position_size(signal, choppiness=self._regime.choppiness)
             trade = await self._executor.place_trade(market, signal, amount)
 
             if trade:
@@ -417,12 +437,13 @@ class Engine:
                     log.warning("Failed to persist trade", exc_info=True)
 
                 log.info(
-                    "TRADE %s %s @ $%.3f ($%.2f) — edge=%.3f",
+                    "TRADE %s %s @ $%.3f ($%.2f) — edge=%.3f chop=%.2f",
                     trade.direction,
                     market.slug,
                     trade.fill_price,
                     trade.amount_usd,
                     signal.edge,
+                    self._regime.choppiness,
                 )
 
     # ── Risk monitor loop ──────────────────────────────────────────────
@@ -435,6 +456,7 @@ class Engine:
                     self._position,
                     self._binance.latest_price,
                     self._polymarket,
+                    choppiness=self._regime.choppiness,
                 ):
                     hedge = await self._executor.place_hedge(
                         self._current_market, self._position
@@ -471,7 +493,7 @@ class Engine:
                            FROM trades t
                            JOIN markets m ON m.slug = t.market_slug
                            LEFT JOIN market_results mr ON mr.market_slug = m.slug
-                           WHERE t.is_paper = 0 AND t.trade_type = 'ENTRY'
+                           WHERE t.trade_type = 'ENTRY'
                              AND m.outcome IS NULL
                              AND m.end_ts < ?
                              AND mr.market_slug IS NULL""",
@@ -491,6 +513,23 @@ class Engine:
                     outcome = await self._fetch_oracle_outcome(slug)
                     if not outcome:
                         continue
+
+                    # Feed regime detector from historical prices
+                    try:
+                        async with connect() as conn2:
+                            mkt_row = await get_market(conn2, slug)
+                            if mkt_row and mkt_row.start_btc_price:
+                                mid_ts = mkt_row.start_ts + 150
+                                cur2 = await conn2.execute(
+                                    "SELECT price FROM btc_prices WHERE ts >= ? AND ts <= ? ORDER BY ts ASC LIMIT 1",
+                                    (mid_ts - 15, mid_ts + 15),
+                                )
+                                mid_row = await cur2.fetchone()
+                                if mid_row:
+                                    first_half_dir = "UP" if mid_row[0] >= mkt_row.start_btc_price else "DOWN"
+                                    self._regime.record(first_half_dir, outcome)
+                    except Exception:
+                        pass
 
                     won = direction == outcome
                     payout = qty if won else 0.0

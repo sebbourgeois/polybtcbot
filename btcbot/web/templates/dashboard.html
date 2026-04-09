@@ -12,18 +12,27 @@
   {% include "partials/recent_trades.html" %}
 </section>
 
-<!-- P&L chart -->
+<!-- Hourly P&L chart -->
 <section>
   <h2>Hourly P&amp;L</h2>
   <div class="chart-wrap">
-    <canvas id="pnlChart" height="200"></canvas>
+    <canvas id="hourlyChart" height="180"></canvas>
+  </div>
+</section>
+
+<!-- Cumulative P&L chart -->
+<section>
+  <h2>Cumulative P&amp;L</h2>
+  <div class="chart-wrap">
+    <canvas id="cumulativeChart" height="180"></canvas>
   </div>
 </section>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  const ctx = document.getElementById('pnlChart');
-  if (!ctx) return;
+  const hourlyCtx = document.getElementById('hourlyChart');
+  const cumulativeCtx = document.getElementById('cumulativeChart');
+  if (!hourlyCtx || !cumulativeCtx) return;
 
   fetch('/api/hourly-pnl?hours=24')
     .then(r => r.json())
@@ -36,67 +45,83 @@ document.addEventListener('DOMContentLoaded', function() {
       let running = 0;
       values.forEach(v => { running += v; cumulative.push(running); });
 
-      new Chart(ctx, {
+      const sharedScaleX = { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#2d333b' } };
+      const sharedTooltip = {
+        backgroundColor: '#151921',
+        titleColor: '#8b949e',
+        bodyColor: '#f0f6fc',
+        borderColor: '#2d333b',
+        borderWidth: 1,
+      };
+
+      new Chart(hourlyCtx, {
         type: 'bar',
         data: {
           labels: labels,
-          datasets: [
-            {
-              label: 'Hourly P&L',
-              data: values,
-              backgroundColor: values.map(v => v >= 0 ? 'rgba(63, 185, 80, 0.4)' : 'rgba(248, 81, 73, 0.4)'),
-              borderColor: values.map(v => v >= 0 ? '#3fb950' : '#f85149'),
-              borderWidth: 1.5,
-              borderRadius: 4,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Cumulative',
-              data: cumulative,
-              type: 'line',
-              borderColor: '#58a6ff',
-              borderWidth: 3,
-              pointRadius: 0,
-              tension: 0.3,
-              yAxisID: 'y1',
-            }
-          ]
+          datasets: [{
+            label: 'Hourly P&L',
+            data: values,
+            backgroundColor: values.map(v => v >= 0 ? 'rgba(63, 185, 80, 0.4)' : 'rgba(248, 81, 73, 0.4)'),
+            borderColor: values.map(v => v >= 0 ? '#3fb950' : '#f85149'),
+            borderWidth: 1.5,
+            borderRadius: 4,
+          }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           scales: {
-            x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#2d333b' } },
+            x: sharedScaleX,
             y: {
-              position: 'left',
               ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(0) },
               grid: { color: '#2d333b' },
             },
-            y1: {
-              position: 'right',
-              ticks: { color: '#58a6ff', callback: v => '$' + v.toFixed(0) },
-              grid: { display: false },
-            }
           },
           plugins: {
-            legend: { 
-              position: 'top',
-              align: 'end',
-              labels: { color: '#f0f6fc', font: { size: 11, weight: 600 }, usePointStyle: true, boxWidth: 6 } 
-            },
+            legend: { display: false },
             tooltip: {
-              backgroundColor: '#151921',
-              titleColor: '#8b949e',
-              bodyColor: '#f0f6fc',
-              borderColor: '#2d333b',
-              borderWidth: 1,
+              ...sharedTooltip,
               callbacks: {
-                afterLabel: function(ctx) {
-                  if (ctx.datasetIndex === 0) return trades[ctx.dataIndex] + ' trades';
-                }
+                afterLabel: function(ctx) { return trades[ctx.dataIndex] + ' trades'; }
               }
             }
+          }
+        }
+      });
+
+      new Chart(cumulativeCtx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Cumulative P&L',
+            data: cumulative,
+            borderColor: '#58a6ff',
+            borderWidth: 3,
+            pointRadius: 0,
+            tension: 0.3,
+            fill: {
+              target: 'origin',
+              above: 'rgba(88, 166, 255, 0.08)',
+              below: 'rgba(248, 81, 73, 0.08)',
+            },
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: sharedScaleX,
+            y: {
+              ticks: { color: '#58a6ff', callback: v => '$' + v.toFixed(0) },
+              grid: { color: '#2d333b' },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: sharedTooltip,
           }
         }
       });

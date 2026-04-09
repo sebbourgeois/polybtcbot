@@ -50,6 +50,7 @@ class SignalGenerator:
         poly_up_price: float | None,
         poly_down_price: float | None,
         time_remaining_sec: float,
+        choppiness: float = 0.0,
     ) -> Signal:
         """Core signal logic.
 
@@ -77,7 +78,7 @@ class SignalGenerator:
 
         # 3. Estimate our fair probability of "Up"
         fair_prob_up = self._estimate_fair_prob(
-            price_delta, mom_5s, mom_15s, time_remaining_sec
+            price_delta, mom_5s, mom_15s, time_remaining_sec, choppiness
         )
 
         # 4. Compare to Polymarket implied probability
@@ -97,7 +98,7 @@ class SignalGenerator:
             poly_p = poly_down_price
 
         # 6. Signal strength (0..1)
-        strength = self._calc_strength(edge, mom_5s, mom_15s, time_remaining_sec)
+        strength = self._calc_strength(edge, mom_5s, mom_15s, time_remaining_sec, choppiness)
 
         btc_dir = "above" if price_delta >= 0 else "below"
         reason = (
@@ -122,6 +123,7 @@ class SignalGenerator:
         mom_5s: float,
         mom_15s: float,
         time_remaining_sec: float,
+        choppiness: float = 0.0,
     ) -> float:
         """Estimate fair probability of 'Up' resolving.
 
@@ -151,8 +153,10 @@ class SignalGenerator:
 
         raw_prob = _sigmoid(combined_z * time_scale)
 
-        # Clamp — our model isn't good enough for extreme probabilities
-        return max(0.08, min(0.92, raw_prob))
+        # Dynamic clamp — tighter in choppy markets to reduce overconfidence
+        max_clamp = 0.80 - (choppiness * 0.15)
+        min_clamp = 1.0 - max_clamp
+        return max(min_clamp, min(max_clamp, raw_prob))
 
     def _calc_momentum(self, seconds: float) -> float:
         """Price change in $/second over the last N seconds."""
@@ -172,6 +176,7 @@ class SignalGenerator:
         mom_5s: float,
         mom_15s: float,
         time_remaining_sec: float,
+        choppiness: float = 0.0,
     ) -> float:
         """Signal strength (0..1). Must exceed CONFIG.min_signal_strength to trade."""
         # Edge contribution (primary): 15% edge = max score
@@ -185,8 +190,11 @@ class SignalGenerator:
         else:
             mom_agreement = 0.5
 
+        # Dynamic warmup: wait longer in choppy markets
+        effective_warmup = CONFIG.warmup_sec + choppiness * 60
+
         # Time window: don't trade in warmup or cooldown
-        if time_remaining_sec > (300 - CONFIG.warmup_sec):
+        if time_remaining_sec > (300 - effective_warmup):
             # Still in warmup
             time_score = 0.0
         elif time_remaining_sec < CONFIG.cooldown_sec:

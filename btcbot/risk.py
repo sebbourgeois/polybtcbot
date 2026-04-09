@@ -84,12 +84,14 @@ class RiskManager:
 
         return True
 
-    def calc_position_size(self, signal: Signal) -> float:
+    def calc_position_size(self, signal: Signal, choppiness: float = 0.0) -> float:
         """Kelly-criterion-inspired sizing, clamped to config limits.
 
         For binary markets at near-even odds:
             f* = (p * b - q) / b
         where b = payout odds = (1/price - 1), p = fair_prob, q = 1 - p.
+
+        Position is scaled down in choppy (mean-reverting) markets.
         """
         price = signal.poly_implied_prob
         if price <= 0.01 or price >= 0.99:
@@ -102,7 +104,8 @@ class RiskManager:
         kelly = (p * b - q) / b if b > 0 else 0
         kelly = max(0.0, min(kelly, 0.25))  # cap at quarter-Kelly
 
-        size = CONFIG.bankroll * kelly
+        regime_factor = 1.0 - (choppiness * 0.6)
+        size = CONFIG.bankroll * kelly * regime_factor
         return max(CONFIG.min_position_usd, min(size, CONFIG.max_position_usd))
 
     def should_hedge(
@@ -110,12 +113,15 @@ class RiskManager:
         position: OpenPosition,
         btc_price: float,
         poly_feed: PolymarketFeed,
+        choppiness: float = 0.0,
     ) -> bool:
         """Check whether an open position should be hedged.
 
         Hedge when our token has dropped significantly from entry price,
         signalling the bet is likely wrong. Hedging (buying the opposite
         side) caps the loss instead of risking 100%.
+
+        Threshold is lowered in choppy markets to trigger earlier.
         """
         if position.market.seconds_remaining < 30:
             return False  # Too close to resolution, let it ride
@@ -124,8 +130,9 @@ class RiskManager:
         if our_price is None:
             return False
 
+        effective_threshold = CONFIG.hedge_trigger_threshold - (choppiness * 0.07)
         drop = position.fill_price - our_price
-        if drop > CONFIG.hedge_trigger_threshold:
+        if drop > effective_threshold:
             log.info(
                 "Hedge triggered: entry=%.3f now=%.3f drop=%.3f",
                 position.fill_price,

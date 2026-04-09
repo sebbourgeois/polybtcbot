@@ -59,6 +59,9 @@ class Config:
     max_price_to_pay: float
     hedge_trigger_threshold: float
 
+    # --- Regime detection ---
+    regime_window: int
+
     # --- Timing ---
     discovery_interval_sec: float
     warmup_sec: float
@@ -99,6 +102,7 @@ def load_config() -> Config:
         max_consecutive_losses=_env_int("BOT_MAX_CONSECUTIVE_LOSSES", 5),
         max_price_to_pay=_env_float("BOT_MAX_PRICE_TO_PAY", 0.65),
         hedge_trigger_threshold=_env_float("BOT_HEDGE_TRIGGER", 0.15),
+        regime_window=_env_int("BOT_REGIME_WINDOW", 20),
         discovery_interval_sec=_env_float("BOT_DISCOVERY_INTERVAL_SEC", 30.0),
         warmup_sec=_env_float("BOT_WARMUP_SEC", 30.0),
         cooldown_sec=_env_float("BOT_COOLDOWN_SEC", 60.0),
