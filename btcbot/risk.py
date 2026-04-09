@@ -67,7 +67,7 @@ class RiskManager:
     def record_hedge(self, pnl: float) -> None:
         self.daily_pnl += pnl
 
-    def can_trade(self, signal: Signal) -> bool:
+    def can_trade(self, signal: Signal, choppiness: float = 0.0) -> bool:
         """Pre-trade risk check. Returns False if any limit is breached."""
         if self.open_positions:
             log.debug("Already have an open position")
@@ -96,8 +96,13 @@ class RiskManager:
             )
             return False
 
-        if signal.edge < CONFIG.min_edge:
-            log.debug("Edge too small: %.3f < %.3f", signal.edge, CONFIG.min_edge)
+        # Dynamic min_edge: require more edge in choppy markets
+        effective_min_edge = CONFIG.min_edge + choppiness * 0.05
+        if signal.edge < effective_min_edge:
+            log.debug(
+                "Edge too small: %.3f < %.3f (chop=%.2f)",
+                signal.edge, effective_min_edge, choppiness,
+            )
             return False
 
         return True
@@ -122,9 +127,14 @@ class RiskManager:
         kelly = (p * b - q) / b if b > 0 else 0
         kelly = max(0.0, min(kelly, 0.25))  # cap at quarter-Kelly
 
+        size = CONFIG.bankroll * kelly
+        size = min(size, CONFIG.max_position_usd)
+
+        # Apply regime scaling AFTER clamping so it always reduces in choppy markets
         regime_factor = 1.0 - (choppiness * 0.6)
-        size = CONFIG.bankroll * kelly * regime_factor
-        return max(CONFIG.min_position_usd, min(size, CONFIG.max_position_usd))
+        size *= regime_factor
+
+        return max(CONFIG.min_position_usd, size)
 
     def should_hedge(
         self,

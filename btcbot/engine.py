@@ -107,7 +107,8 @@ class Engine:
     # ── State recovery ─────────────────────────────────────────────────
 
     async def _restore_state(self) -> None:
-        """Restore open position from DB so restarts don't lose trades."""
+        """Restore open position and regime detector from DB."""
+        await self._seed_regime()
         try:
             async with connect() as conn:
                 pos_data = await load_open_position(conn)
@@ -145,6 +146,43 @@ class Engine:
                 )
         except Exception:
             log.warning("Failed to restore position state", exc_info=True)
+
+    async def _seed_regime(self) -> None:
+        """Seed regime detector from recent historical data so it starts informed."""
+        try:
+            async with connect() as conn:
+                cur = await conn.execute(
+                    """SELECT m.start_ts, m.start_btc_price, m.outcome
+                       FROM markets m
+                       WHERE m.outcome IS NOT NULL AND m.start_btc_price IS NOT NULL
+                       ORDER BY m.start_ts DESC
+                       LIMIT ?""",
+                    (CONFIG.regime_window,),
+                )
+                rows = await cur.fetchall()
+
+            # Process oldest first so the buffer ends with the most recent
+            seeded = 0
+            for start_ts, start_price, outcome in reversed(rows):
+                mid_ts = start_ts + 150
+                async with connect() as conn:
+                    cur = await conn.execute(
+                        "SELECT price FROM btc_prices WHERE ts >= ? AND ts <= ? ORDER BY ts ASC LIMIT 1",
+                        (mid_ts - 15, mid_ts + 15),
+                    )
+                    mid_row = await cur.fetchone()
+                if mid_row:
+                    first_half_dir = "UP" if mid_row[0] >= start_price else "DOWN"
+                    self._regime.record(first_half_dir, outcome)
+                    seeded += 1
+
+            if seeded:
+                log.info(
+                    "Regime detector seeded: %d samples, choppiness=%.2f",
+                    seeded, self._regime.choppiness,
+                )
+        except Exception:
+            log.warning("Failed to seed regime detector", exc_info=True)
 
     # ── Callbacks ──────────────────────────────────────────────────────
 
@@ -405,7 +443,7 @@ class Engine:
             if signal.strength < CONFIG.min_signal_strength:
                 continue
 
-            if not self._risk.can_trade(signal):
+            if not self._risk.can_trade(signal, choppiness=self._regime.choppiness):
                 continue
 
             # Place trade
