@@ -66,16 +66,16 @@ class TestSignalGenerator:
         assert sig.strength == 0.0
 
     def test_btc_up_detects_up(self, gen: SignalGenerator, market: Market):
-        # Feed prices showing BTC going up
+        # Feed prices showing BTC going up (delta=$30, within max_delta)
         base = 50000
         t = market.start_ts
         gen.update_chainlink_price(base, t)
         for i in range(30):
-            gen.update_btc_price(base + i * 2, t + i)
-        gen.update_chainlink_price(base + 60, t + 30)
+            gen.update_btc_price(base + i, t + i)
+        gen.update_chainlink_price(base + 30, t + 30)
 
         sig = gen.evaluate(
-            btc_price=base + 60,
+            btc_price=base + 30,
             poly_up_price=0.50,  # Market hasn't moved yet
             poly_down_price=0.50,
             time_remaining_sec=150,
@@ -89,11 +89,11 @@ class TestSignalGenerator:
         t = market.start_ts
         gen.update_chainlink_price(base, t)
         for i in range(30):
-            gen.update_btc_price(base - i * 2, t + i)
-        gen.update_chainlink_price(base - 60, t + 30)
+            gen.update_btc_price(base - i, t + i)
+        gen.update_chainlink_price(base - 30, t + 30)
 
         sig = gen.evaluate(
-            btc_price=base - 60,
+            btc_price=base - 30,
             poly_up_price=0.50,
             poly_down_price=0.50,
             time_remaining_sec=150,
@@ -106,11 +106,11 @@ class TestSignalGenerator:
         t = market.start_ts
         gen.update_chainlink_price(base, t)
         for i in range(30):
-            gen.update_btc_price(base + i * 2, t + i)
-        gen.update_chainlink_price(base + 60, t + 30)
+            gen.update_btc_price(base + i, t + i)
+        gen.update_chainlink_price(base + 30, t + 30)
 
         sig = gen.evaluate(
-            btc_price=base + 60,
+            btc_price=base + 30,
             poly_up_price=0.85,  # Market already priced it in
             poly_down_price=0.15,
             time_remaining_sec=150,
@@ -153,10 +153,10 @@ class TestSignalGenerator:
         t = market.start_ts
         gen.update_btc_price(base, t + 1)
         gen.update_chainlink_price(base, t + 1)
-        gen.update_chainlink_price(base + 5000, t + 2)
+        gen.update_chainlink_price(base + 40, t + 2)  # Near max_delta but under
 
         sig = gen.evaluate(
-            btc_price=base + 5000,  # Massive move
+            btc_price=base + 40,
             poly_up_price=0.50,
             poly_down_price=0.50,
             time_remaining_sec=150,
