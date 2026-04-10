@@ -39,3 +39,6 @@ htmlcov/
 # MISC
 check.py
 CLAUDE.md
+
+# Worktrees (isolated feature branches)
+.worktrees/
