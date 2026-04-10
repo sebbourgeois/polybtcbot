@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS market_results (
     redeemed_at     INTEGER
 );
 
+CREATE INDEX IF NOT EXISTS idx_market_results_resolved_at ON market_results(resolved_at);
+
 CREATE TABLE IF NOT EXISTS daily_pnl (
     date            TEXT PRIMARY KEY,
     trades_count    INTEGER NOT NULL DEFAULT 0,

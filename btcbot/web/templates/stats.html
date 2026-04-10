@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+{% block title %}Stats — btcbot{% endblock %}
+
+{% block content %}
+<h1>Stats</h1>
+<h2>Realized P&amp;L by period</h2>
+
+<div class="period-toggle" role="tablist" aria-label="Period">
+  <button type="button" data-period="day" class="active">Day</button>
+  <button type="button" data-period="week">Week</button>
+  <button type="button" data-period="month">Month</button>
+  <button type="button" data-period="all">All-Time</button>
+</div>
+
+<div class="stats-row">
+  <div class="stat">
+    <div class="label">Net P&amp;L</div>
+    <div class="value" id="tile-net-pnl">$0.00</div>
+  </div>
+  <div class="stat">
+    <div class="label">Trades</div>
+    <div class="value" id="tile-trades">0</div>
+  </div>
+  <div class="stat">
+    <div class="label">Win Rate</div>
+    <div class="value" id="tile-win-rate" style="color: var(--accent)">0.0%</div>
+  </div>
+  <div class="stat">
+    <div class="label">Wins</div>
+    <div class="value pos" id="tile-wins">0</div>
+  </div>
+  <div class="stat">
+    <div class="label">Losses</div>
+    <div class="value neg" id="tile-losses">0</div>
+  </div>
+  <div class="stat">
+    <div class="label">Hedged</div>
+    <div class="value" id="tile-hedged" style="color: var(--warn)">0</div>
+  </div>
+  <div class="stat two-line">
+    <div class="label">Best Market</div>
+    <div class="value pos" id="tile-best-market">—</div>
+    <div class="slug" id="tile-best-slug"></div>
+  </div>
+  <div class="stat two-line">
+    <div class="label">Worst Market</div>
+    <div class="value neg" id="tile-worst-market">—</div>
+    <div class="slug" id="tile-worst-slug"></div>
+  </div>
+</div>
+
+<section>
+  <h2 id="equity-title">Equity Curve</h2>
+  <div class="chart-wrap" id="equity-wrap">
+    <canvas id="chart-equity" height="220"></canvas>
+    <div class="empty-state" id="equity-empty" style="display:none">No trades in this period</div>
+  </div>
+</section>
+
+<section>
+  <h2 id="bars-title">Hourly P&amp;L</h2>
+  <div class="chart-wrap" id="bars-wrap">
+    <canvas id="chart-bars" height="220"></canvas>
+    <div class="empty-state" id="bars-empty" style="display:none">No trades in this period</div>
+  </div>
+</section>
+
+<section>
+  <h2>Outcome Distribution</h2>
+  <div class="chart-wrap distribution" id="distribution-wrap">
+    <canvas id="chart-distribution"></canvas>
+    <div class="empty-state" id="distribution-empty" style="display:none">No trades in this period</div>
+  </div>
+</section>
+
+<script type="application/json" id="initial-stats">{{ initial_stats|tojson|safe }}</script>
+
+<script>
+/* Stats page — period switching + Chart.js rendering */
+(function() {
+  const charts = { equity: null, bars: null, distribution: null };
+  let currentPeriod = "day";
+  let inFlight = false;
+
+  /* ── Formatting helpers ─────────────────────────────────────── */
+  function formatUsd(n) {
+    const v = Number(n) || 0;
+    const sign = v > 0 ? "+" : v < 0 ? "−" : "";
+    return sign + "$" + Math.abs(v).toFixed(2);
+  }
+  function formatPct(n) {
+    return ((Number(n) || 0) * 100).toFixed(1) + "%";
+  }
+  function setPosNegClass(el, v) {
+    el.classList.remove("pos", "neg");
+    if (v > 0) el.classList.add("pos");
+    else if (v < 0) el.classList.add("neg");
+  }
+
+  /* ── Short label for x-axis display ─────────────────────────── */
+  function shortLabel(bucket, grain) {
+    if (grain === "hour") {
+      // "2026-04-10 14:00" → "14:00"
+      const parts = bucket.split(" ");
+      return parts.length === 2 ? parts[1] : bucket;
+    }
+    if (grain === "day") {
+      // "2026-04-10" → "04-10"
+      return bucket.length === 10 ? bucket.slice(5) : bucket;
+    }
+    return bucket;  // week / month: "2026-W15" / "2026-04"
+  }
+
+  const barsTitleByGrain = {
+    hour: "Hourly P&L",
+    day: "Daily P&L",
+    week: "Weekly P&L",
+    month: "Monthly P&L",
+  };
+
+  /* ── Tile update ────────────────────────────────────────────── */
+  function updateTiles(tiles) {
+    const netPnl = document.getElementById("tile-net-pnl");
+    netPnl.textContent = formatUsd(tiles.net_pnl);
+    setPosNegClass(netPnl, tiles.net_pnl);
+
+    document.getElementById("tile-trades").textContent = String(tiles.trades);
+    document.getElementById("tile-win-rate").textContent = formatPct(tiles.win_rate);
+    document.getElementById("tile-wins").textContent = String(tiles.wins);
+    document.getElementById("tile-losses").textContent = String(tiles.losses);
+    document.getElementById("tile-hedged").textContent = String(tiles.hedged);
+
+    const bestEl = document.getElementById("tile-best-market");
+    const bestSlug = document.getElementById("tile-best-slug");
+    if (tiles.best_market) {
+      bestEl.textContent = formatUsd(tiles.best_market.pnl);
+      bestSlug.textContent = tiles.best_market.slug;
+    } else {
+      bestEl.textContent = "—";
+      bestSlug.textContent = "";
+    }
+
+    const worstEl = document.getElementById("tile-worst-market");
+    const worstSlug = document.getElementById("tile-worst-slug");
+    if (tiles.worst_market) {
+      worstEl.textContent = formatUsd(tiles.worst_market.pnl);
+      worstSlug.textContent = tiles.worst_market.slug;
+    } else {
+      worstEl.textContent = "—";
+      worstSlug.textContent = "";
+    }
+  }
+
+  /* ── Shared Chart.js base options ──────────────────────────── */
+  const sharedScaleX = { ticks: { color: "#8b949e", font: { size: 10 } }, grid: { color: "#2d333b" } };
+  const sharedTooltip = {
+    backgroundColor: "#151921",
+    titleColor: "#8b949e",
+    bodyColor: "#f0f6fc",
+    borderColor: "#2d333b",
+    borderWidth: 1,
+  };
+
+  /* ── Chart factories ────────────────────────────────────────── */
+  function createEquityChart(ctx, labels, values) {
+    return new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Cumulative P&L",
+          data: values,
+          borderColor: "#58a6ff",
+          borderWidth: 3,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: {
+            target: "origin",
+            above: "rgba(88, 166, 255, 0.08)",
+            below: "rgba(248, 81, 73, 0.08)",
+          },
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: sharedScaleX,
+          y: {
+            ticks: { color: "#58a6ff", callback: v => "$" + v.toFixed(0) },
+            grid: { color: "#2d333b" },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            ...sharedTooltip,
+            callbacks: { label: (c) => "Equity: $" + c.parsed.y.toFixed(2) },
+          },
+        },
+      },
+    });
+  }
+
+  function createBarsChart(ctx, labels, values, trades) {
+    return new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Net P&L",
+          data: values,
+          backgroundColor: values.map(v => v >= 0 ? "rgba(63, 185, 80, 0.5)" : "rgba(248, 81, 73, 0.5)"),
+          borderColor: values.map(v => v >= 0 ? "#3fb950" : "#f85149"),
+          borderWidth: 1.5,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: sharedScaleX,
+          y: {
+            ticks: { color: "#8b949e", callback: v => "$" + v.toFixed(0) },
+            grid: { color: "#2d333b" },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            ...sharedTooltip,
+            callbacks: {
+              label: (c) => "Net P&L: $" + c.parsed.y.toFixed(2),
+              afterLabel: (c) => (trades[c.dataIndex] || 0) + " trade(s)",
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function createDistributionChart(ctx, wins, losses, hedged) {
+    return new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: ["Wins", "Losses", "Hedged"],
+        datasets: [{
+          data: [wins, losses, hedged],
+          backgroundColor: ["#3fb950", "#f85149", "#d29922"],
+          borderColor: "#151921",
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: "60%",
+        plugins: {
+          legend: {
+            position: "right",
+            labels: {
+              color: "#f0f6fc",
+              font: { size: 12 },
+              generateLabels: (chart) => {
+                const data = chart.data.datasets[0].data;
+                const total = data.reduce((a, b) => a + b, 0) || 1;
+                return chart.data.labels.map((lbl, i) => ({
+                  text: lbl + ": " + data[i] + " (" + ((data[i] / total) * 100).toFixed(0) + "%)",
+                  fillStyle: chart.data.datasets[0].backgroundColor[i],
+                  strokeStyle: chart.data.datasets[0].backgroundColor[i],
+                  fontColor: "#f0f6fc",
+                  index: i,
+                }));
+              },
+            },
+          },
+          tooltip: sharedTooltip,
+        },
+      },
+    });
+  }
+
+  /* ── Chart update (mutate + .update()) ──────────────────────── */
+  function renderCharts(data) {
+    const grain = data.grain;
+    const equityLabels = data.equity.map(e => shortLabel(e.bucket, grain));
+    const equityValues = data.equity.map(e => e.value);
+    const barLabels = data.bars.map(b => shortLabel(b.bucket, grain));
+    const barValues = data.bars.map(b => b.net_pnl);
+    const barTrades = data.bars.map(b => b.trades);
+
+    const equityIsEmpty = data.equity.length === 0;
+    const barsIsEmpty = data.bars.length === 0;
+    toggleEmpty("equity", equityIsEmpty);
+    toggleEmpty("bars", barsIsEmpty);
+
+    document.getElementById("bars-title").textContent = barsTitleByGrain[grain] || "P&L";
+
+    const equityCanvas = document.getElementById("chart-equity");
+    const barsCanvas = document.getElementById("chart-bars");
+    const distCanvas = document.getElementById("chart-distribution");
+
+    if (!equityIsEmpty) {
+      if (!charts.equity) {
+        charts.equity = createEquityChart(equityCanvas, equityLabels, equityValues);
+      } else {
+        charts.equity.data.labels = equityLabels;
+        charts.equity.data.datasets[0].data = equityValues;
+        charts.equity.update();
+      }
+    }
+
+    if (!barsIsEmpty) {
+      if (!charts.bars) {
+        charts.bars = createBarsChart(barsCanvas, barLabels, barValues, barTrades);
+      } else {
+        charts.bars.data.labels = barLabels;
+        charts.bars.data.datasets[0].data = barValues;
+        charts.bars.data.datasets[0].backgroundColor = barValues.map(v => v >= 0 ? "rgba(63, 185, 80, 0.5)" : "rgba(248, 81, 73, 0.5)");
+        charts.bars.data.datasets[0].borderColor = barValues.map(v => v >= 0 ? "#3fb950" : "#f85149");
+        charts.bars.update();
+      }
+    }
+
+    // Distribution chart: hide only if all three counts are zero
+    const dist = data.distribution;
+    const distEmpty = (dist.wins + dist.losses + dist.hedged) === 0;
+    toggleEmpty("distribution", distEmpty);
+    if (!distEmpty) {
+      if (!charts.distribution) {
+        charts.distribution = createDistributionChart(distCanvas, dist.wins, dist.losses, dist.hedged);
+      } else {
+        charts.distribution.data.datasets[0].data = [dist.wins, dist.losses, dist.hedged];
+        charts.distribution.update();
+      }
+    }
+  }
+
+  function toggleEmpty(name, empty) {
+    const canvas = document.getElementById("chart-" + name);
+    const emptyEl = document.getElementById(name + "-empty");
+    if (empty) {
+      canvas.style.display = "none";
+      emptyEl.style.display = "block";
+    } else {
+      canvas.style.display = "";
+      emptyEl.style.display = "none";
+    }
+  }
+
+  /* ── Render (tiles + charts) ────────────────────────────────── */
+  function render(data) {
+    updateTiles(data.tiles);
+    renderCharts(data);
+  }
+
+  /* ── Period switching ───────────────────────────────────────── */
+  function setLoading(on) {
+    ["equity-wrap", "bars-wrap", "distribution-wrap"].forEach(id => {
+      const el = document.getElementById(id);
+      if (on) el.classList.add("is-loading");
+      else el.classList.remove("is-loading");
+    });
+  }
+
+  async function switchPeriod(period) {
+    if (period === currentPeriod || inFlight) return;
+    inFlight = true;
+    document.querySelectorAll(".period-toggle button").forEach(b => {
+      b.classList.toggle("active", b.dataset.period === period);
+    });
+    setLoading(true);
+    try {
+      const res = await fetch("/api/stats?period=" + encodeURIComponent(period));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      render(data);
+      currentPeriod = period;
+    } catch (err) {
+      console.error("stats fetch failed", err);
+    } finally {
+      setLoading(false);
+      inFlight = false;
+    }
+  }
+
+  /* ── Boot ───────────────────────────────────────────────────── */
+  document.addEventListener("DOMContentLoaded", function() {
+    const raw = document.getElementById("initial-stats").textContent;
+    let initial;
+    try {
+      initial = JSON.parse(raw);
+    } catch (e) {
+      console.error("invalid initial-stats JSON", e);
+      return;
+    }
+    render(initial);
+    document.querySelectorAll(".period-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => switchPeriod(btn.dataset.period));
+    });
+  });
+})();
+</script>
+{% endblock %}
