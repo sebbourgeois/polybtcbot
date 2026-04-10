@@ -180,3 +180,114 @@ async def test_stats_summary_time_filter(stats_db):
     assert row.hedged == 0
     assert row.best_market == ("new-a", 5.0)
     assert row.worst_market == ("new-b", -2.0)
+
+
+# ── stats_equity (pure) ───────────────────────────────────────────────
+
+
+def test_stats_equity_empty():
+    assert repo.stats_equity([]) == []
+
+
+def test_stats_equity_cumulative():
+    buckets = [
+        repo.BucketRow(bucket="a", net_pnl=10.0, trades=1),
+        repo.BucketRow(bucket="b", net_pnl=-3.0, trades=2),
+        repo.BucketRow(bucket="c", net_pnl=5.0, trades=0),
+    ]
+    equity = repo.stats_equity(buckets)
+    assert equity == [
+        repo.EquityPoint(bucket="a", value=10.0),
+        repo.EquityPoint(bucket="b", value=7.0),
+        repo.EquityPoint(bucket="c", value=12.0),
+    ]
+
+
+# ── stats_buckets (DB-backed) ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stats_buckets_day_grain_zero_fills(stats_db, monkeypatch):
+    """Seed trades on day 1 and day 3; day 2 should be zero-filled."""
+    _freeze(monkeypatch, "2026-04-10T10:00:00")
+
+    def ts(y, m, d, h=12):
+        return int(datetime.datetime(y, m, d, h, 0, 0).timestamp())
+
+    await _insert_market_and_result(stats_db, "a", 10.0, 1, ts(2026, 4, 8))
+    await _insert_market_and_result(stats_db, "b", -4.0, 0, ts(2026, 4, 10))
+
+    since_ts = int(datetime.datetime(2026, 4, 8, 0, 0, 0).timestamp())
+    buckets = await repo.stats_buckets(stats_db, since_ts=since_ts, grain="day")
+
+    labels = [b.bucket for b in buckets]
+    assert labels == ["2026-04-08", "2026-04-09", "2026-04-10"]
+
+    pnls = {b.bucket: b.net_pnl for b in buckets}
+    assert pnls["2026-04-08"] == pytest.approx(10.0)
+    assert pnls["2026-04-09"] == pytest.approx(0.0)
+    assert pnls["2026-04-10"] == pytest.approx(-4.0)
+
+    trades = {b.bucket: b.trades for b in buckets}
+    assert trades["2026-04-09"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stats_buckets_hour_grain(stats_db, monkeypatch):
+    _freeze(monkeypatch, "2026-04-10T05:00:00")
+
+    def ts(hour):
+        return int(datetime.datetime(2026, 4, 10, hour, 15, 0).timestamp())
+
+    await _insert_market_and_result(stats_db, "h1", 2.0, 1, ts(1))
+    await _insert_market_and_result(stats_db, "h2", 3.0, 1, ts(1))  # same hour
+    await _insert_market_and_result(stats_db, "h3", -1.5, 0, ts(3))
+
+    since_ts = int(datetime.datetime(2026, 4, 10, 0, 0, 0).timestamp())
+    buckets = await repo.stats_buckets(stats_db, since_ts=since_ts, grain="hour")
+
+    labels = [b.bucket for b in buckets]
+    assert labels == [
+        "2026-04-10 00:00",
+        "2026-04-10 01:00",
+        "2026-04-10 02:00",
+        "2026-04-10 03:00",
+        "2026-04-10 04:00",
+        "2026-04-10 05:00",
+    ]
+
+    pnls = {b.bucket: b.net_pnl for b in buckets}
+    assert pnls["2026-04-10 01:00"] == pytest.approx(5.0)
+    assert pnls["2026-04-10 03:00"] == pytest.approx(-1.5)
+    assert pnls["2026-04-10 00:00"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_stats_buckets_week_grain_rollup(stats_db, monkeypatch):
+    _freeze(monkeypatch, "2026-04-10T10:00:00")
+
+    def ts(y, m, d):
+        return int(datetime.datetime(y, m, d, 12, 0, 0).timestamp())
+
+    # Two days in ISO week 2026-W14 (Mon 2026-03-30 .. Sun 2026-04-05)
+    await _insert_market_and_result(stats_db, "w1a", 1.0, 1, ts(2026, 3, 30))
+    await _insert_market_and_result(stats_db, "w1b", 4.0, 1, ts(2026, 4, 2))
+    # One day in ISO week 2026-W15 (Mon 2026-04-06 .. Sun 2026-04-12)
+    await _insert_market_and_result(stats_db, "w2", -2.0, 0, ts(2026, 4, 8))
+
+    since_ts = int(datetime.datetime(2026, 3, 30, 0, 0, 0).timestamp())
+    buckets = await repo.stats_buckets(stats_db, since_ts=since_ts, grain="week")
+
+    labels = [b.bucket for b in buckets]
+    assert labels == ["2026-W14", "2026-W15"]
+    pnls = {b.bucket: b.net_pnl for b in buckets}
+    assert pnls["2026-W14"] == pytest.approx(5.0)
+    assert pnls["2026-W15"] == pytest.approx(-2.0)
+
+
+@pytest.mark.asyncio
+async def test_stats_buckets_empty_since_zero(stats_db, monkeypatch):
+    """Empty DB with since_ts=0 returns an empty list (no walk)."""
+    _freeze(monkeypatch, "2026-04-10T10:00:00")
+    buckets = await repo.stats_buckets(stats_db, since_ts=0, grain="week")
+    assert buckets == []

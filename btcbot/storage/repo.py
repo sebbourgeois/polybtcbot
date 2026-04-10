@@ -568,3 +568,150 @@ async def stats_summary(
         best_market=best_market,
         worst_market=worst_market,
     )
+
+
+@dataclass
+class BucketRow:
+    bucket: str   # display label, e.g. "2026-04-10", "2026-04-10 14:00", "2026-W15", "2026-04"
+    net_pnl: float
+    trades: int
+
+
+@dataclass
+class EquityPoint:
+    bucket: str
+    value: float
+
+
+def stats_equity(buckets: list[BucketRow]) -> list[EquityPoint]:
+    """Running cumulative sum over bucket P&L. Pure function."""
+    points: list[EquityPoint] = []
+    running = 0.0
+    for b in buckets:
+        running += b.net_pnl
+        points.append(EquityPoint(bucket=b.bucket, value=round(running, 2)))
+    return points
+
+
+def _expected_bucket_labels(
+    walk_start_ts: int, now_ts: int, grain: str
+) -> list[str]:
+    """Enumerate every expected bucket label from walk_start through now (inclusive)."""
+    start = datetime.datetime.fromtimestamp(walk_start_ts)
+    end = datetime.datetime.fromtimestamp(now_ts)
+    labels: list[str] = []
+
+    if grain == "hour":
+        t = start.replace(minute=0, second=0, microsecond=0)
+        while t <= end:
+            labels.append(t.strftime("%Y-%m-%d %H:00"))
+            t += datetime.timedelta(hours=1)
+        return labels
+
+    if grain == "day":
+        t = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        while t <= end:
+            labels.append(t.strftime("%Y-%m-%d"))
+            t += datetime.timedelta(days=1)
+        return labels
+
+    if grain == "week":
+        # Walk day-by-day and dedupe by ISO-week label. Simpler than aligning to Monday.
+        t = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        seen: set[str] = set()
+        while t <= end:
+            iso_year, iso_week, _ = t.isocalendar()
+            label = f"{iso_year}-W{iso_week:02d}"
+            if label not in seen:
+                seen.add(label)
+                labels.append(label)
+            t += datetime.timedelta(days=1)
+        return labels
+
+    if grain == "month":
+        t = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        while t <= end:
+            labels.append(f"{t.year:04d}-{t.month:02d}")
+            if t.month == 12:
+                t = t.replace(year=t.year + 1, month=1)
+            else:
+                t = t.replace(month=t.month + 1)
+        return labels
+
+    raise ValueError(f"unknown grain: {grain!r}")
+
+
+def _label_from_day(day_str: str, grain: str) -> str:
+    """Given a '%Y-%m-%d' string, return the bucket label at the requested grain."""
+    d = datetime.date.fromisoformat(day_str)
+    if grain == "day":
+        return day_str
+    if grain == "week":
+        iso_year, iso_week, _ = d.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if grain == "month":
+        return f"{d.year:04d}-{d.month:02d}"
+    raise ValueError(f"unexpected grain for day rollup: {grain!r}")
+
+
+async def stats_buckets(
+    conn: aiosqlite.Connection, since_ts: int, grain: str
+) -> list[BucketRow]:
+    """Aggregate market_results into time buckets of the given grain.
+
+    For hour grain, SQL groups directly by hour string.
+    For day/week/month grains, SQL groups by day and Python rolls up into
+    the requested grain (avoids SQLite strftime quirks for ISO weeks).
+    Missing buckets are zero-filled so the chart has a continuous x-axis.
+    """
+    if grain not in ("hour", "day", "week", "month"):
+        raise ValueError(f"unknown grain: {grain!r}")
+
+    # 1) Query SQL at the correct base grain ──────────────────────────
+    if grain == "hour":
+        sql_fmt = "%Y-%m-%d %H:00"
+    else:
+        sql_fmt = "%Y-%m-%d"  # day-level; we roll up in Python for week/month
+
+    cur = await conn.execute(
+        f"""SELECT
+              strftime(?, resolved_at, 'unixepoch', 'localtime') AS bucket,
+              COALESCE(SUM(net_pnl_usd), 0.0) AS net_pnl,
+              COUNT(*) AS trades
+            FROM market_results
+            WHERE resolved_at >= ?
+            GROUP BY bucket
+            ORDER BY bucket ASC""",
+        (sql_fmt, since_ts),
+    )
+    raw_rows = await cur.fetchall()
+
+    # 2) Roll up day-level rows into week/month if needed ─────────────
+    agg: dict[str, tuple[float, int]] = {}  # label -> (net_pnl, trades)
+    for row in raw_rows:
+        raw_label = str(row["bucket"])
+        if grain in ("hour", "day"):
+            label = raw_label
+        else:
+            label = _label_from_day(raw_label, grain)
+        pnl, tr = agg.get(label, (0.0, 0))
+        agg[label] = (pnl + float(row["net_pnl"]), tr + int(row["trades"]))
+
+    # 3) Determine walk start for zero-fill ───────────────────────────
+    if since_ts > 0:
+        walk_start = since_ts
+    else:
+        oldest = await oldest_resolved_at(conn)
+        if oldest is None:
+            return []  # empty DB and all-time view → no buckets
+        walk_start = oldest
+
+    now_ts = int(_now_local().timestamp())
+
+    # 4) Generate expected labels and zero-fill ───────────────────────
+    expected = _expected_bucket_labels(walk_start, now_ts, grain)
+    out: list[BucketRow] = []
+    for label in expected:
+        pnl, tr = agg.get(label, (0.0, 0))
+        out.append(BucketRow(bucket=label, net_pnl=round(pnl, 2), trades=tr))
+    return out
