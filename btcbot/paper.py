@@ -63,12 +63,14 @@ class PaperExecutor:
         self,
         market: Market,
         position: OpenPosition,
+        estimated_price: float | None = None,
     ) -> TradeRecord | None:
         """Simulate a hedge by buying the opposite side."""
         opposite_dir = "DOWN" if position.direction == "UP" else "UP"
         opposite_token = market.token_id_for(opposite_dir)
-        hedge_cost = position.token_quantity * 0.50
-        fill_price = 0.50 + SIMULATED_SPREAD / 2
+        est_price = estimated_price if estimated_price and estimated_price > 0 else 0.50
+        fill_price = min(est_price + SIMULATED_SPREAD / 2, 0.99)
+        hedge_cost = position.token_quantity * fill_price
         qty = hedge_cost / fill_price if fill_price > 0 else 0
 
         log.info(

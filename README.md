@@ -21,7 +21,7 @@ Latency-arbitrage trading bot for [Polymarket](https://polymarket.com)'s 5-minut
 Inspired by **stargate5** — [$168K profit from 16,816 trades at 61.5% win rate](#about-stargate5) on these exact markets.
 
 > [!CAUTION]
-> This bot is for **educational and research purposes**. Trading on prediction markets involves real financial risk. The strategy has a ~60% expected win rate — meaning ~40% of trades lose. Always start with paper trading.
+> This bot is for **educational and research purposes**. Trading on prediction markets involves real financial risk. Treat any target win rate as something to validate with fresh paper data, not as a guarantee. Always start with paper trading.
 
 ## Overview
 
@@ -43,14 +43,14 @@ Polymarket WS -- odds -> |  -> risk  |
                          +-----------+
 ```
 
-The bot runs **5 concurrent async tasks**: two WebSocket feeds (Binance + Polymarket), market discovery, signal evaluation, and risk monitoring — all coordinated via `asyncio.TaskGroup`. A **regime detector** continuously adapts the strategy based on whether the market is trending or choppy.
+The bot runs concurrent async tasks for Binance, Chainlink, and Polymarket feeds, plus market discovery, trading, risk monitoring, and unresolved-market sweeping, all coordinated via `asyncio.TaskGroup`. A **regime detector** continuously adapts the strategy based on whether the market is trending or choppy.
 
 ### Features
 
 - **Real-time feeds** — Binance BTC/USDT WebSocket (~100ms) + Polymarket CLOB odds stream
 - **Signal engine** — Sigmoid probability model comparing BTC momentum vs market odds, with regime-aware confidence scaling
 - **Regime detection** — Tracks intra-window reversal rate to adapt strategy between trending and mean-reverting markets
-- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, auto-hedging with dynamic thresholds
+- **Risk management** — Quarter-Kelly sizing, daily stop-loss, consecutive loss limits, and single-shot hedging with dynamic thresholds
 - **Live dashboard** — Dark-themed UI with auto-refreshing panels, trade log, and Chart.js equity curves
 - **Paper trading** — Full simulation with realistic spread modeling, same DB schema as live
 - **CLI tools** — `serve`, `run`, `status`, `history`, `initdb`
@@ -78,9 +78,9 @@ Open [http://localhost:8500](http://localhost:8500) — the dashboard shows live
 
 | Phase | Window | Action |
 |---|---|---|
-| Warmup | 0s → 30s | Collect BTC price baseline. No trades. |
-| Trading | 30s → 240s | Evaluate signals on every tick. Enter when edge > 5%. |
-| Cooldown | 240s → 300s | No new entries. Monitor for hedge triggers. |
+| Warmup | 0s → 45s | Collect BTC price baseline. No trades. |
+| Trading | 45s → 180s | Evaluate signals on every tick. Enter only on stronger confirmed edges. |
+| Cooldown | 180s → 300s | No new entries. Monitor open positions and optional hedge trigger. |
 | Resolution | 300s | Chainlink resolves. Record outcome, update P&L. |
 
 ### Signal Generation
@@ -91,7 +91,7 @@ On every BTC price tick, the signal engine:
 2. Measures **momentum** over 5s, 15s, and 30s windows
 3. Estimates a **fair probability** of "Up" resolving via a sigmoid model, normalized by expected 5-minute BTC volatility
 4. Compares the fair probability against **Polymarket's implied odds**
-5. Fires a trade signal when `edge > 5%` AND `strength > 0.30`
+5. Fires a trade signal when the configured edge and strength thresholds are met
 
 The fair probability is clamped dynamically based on the current **regime choppiness** score — tighter in mean-reverting markets (max 65%) to prevent overconfident bets that reverse.
 
@@ -102,27 +102,29 @@ The bot tracks a rolling window of the last 20 markets and measures how often th
 | Parameter | Trending (0.0) | Choppy (1.0) |
 |---|---|---|
 | Fair prob clamp | 0.80 | 0.65 |
-| Warmup period | 30s | 90s |
+| Warmup period | 45s | 60s |
 | Position size | 100% Kelly | 40% Kelly |
-| Hedge threshold | 15% drop | 8% drop |
+| Hedge threshold | configured % | configured + 5% |
 
 ### Risk Controls
 
 | Control | Default | What it does |
 |---|---|---|
 | Position sizing | Quarter-Kelly | Sizes bets based on edge magnitude, scaled by regime |
-| Max per trade | $25 | Caps any single bet |
+| Max per trade | $25 | Caps any single bet by default |
 | Daily stop-loss | $50 | Halts trading for the day |
 | Consecutive losses | 5 | Pauses after 5 straight losses |
-| Price cap | $0.65 | Never pays more than 65¢ per token |
-| Hedge trigger | 15% drop | Buys opposite side to cap losses (8% in choppy markets) |
+| Price cap | $0.65 | Never pays more than the configured token cap |
+| Hedge trigger | 15% drop | Triggers at a percentage drop from entry price, once per market |
+| Hedge time guard | Last 150s | Only hedges in the second half of the market window |
+| Hedge price guard | opposite < $0.85 | Skips hedge if the opposite token is too expensive |
 
 ### How Hedging Works
 
 If you buy "Up" at $0.55 and BTC reverses:
 
 - **Without hedge**: Market resolves "Down" → you lose $0.55 per token (100%)
-- **With hedge**: Buy "Down" at $0.60 → you hold both sides → guaranteed $1.00 payout → net loss capped at **$0.15** instead of $0.55
+- **With hedge**: Buy "Down" once after a confirmed drawdown in the second half of the window → holds both sides → loss is capped to the spread between entry and hedge prices
 
 ## Dashboard
 
@@ -187,7 +189,7 @@ cp .env.example .env
 | `BOT_MAX_DAILY_LOSS_USD` | `50.0` | Daily stop-loss |
 | `BOT_MAX_CONSECUTIVE_LOSSES` | `5` | Pause after N straight losses |
 | `BOT_MAX_PRICE_TO_PAY` | `0.65` | Max token price to buy |
-| `BOT_HEDGE_TRIGGER` | `0.15` | Hedge when token drops 15% |
+| `BOT_HEDGE_TRIGGER` | `0.15` | Hedge when the held token drops 15% from entry price |
 
 ### Regime Detection
 
@@ -203,6 +205,19 @@ cp .env.example .env
 | `BOT_WARMUP_SEC` | `30.0` | No-trade warmup period |
 | `BOT_COOLDOWN_SEC` | `60.0` | No-entry cooldown before resolution |
 | `BOT_RISK_CHECK_SEC` | `2.0` | Hedge-check interval |
+
+### Current paper profile
+
+The checked-in `.env` is intentionally stricter than the library defaults while validating the strategy in paper mode:
+
+- `BOT_MIN_SIGNAL_STRENGTH=0.65`
+- `BOT_MIN_EDGE=0.12`
+- `BOT_MAX_PRICE_TO_PAY=0.45`
+- `BOT_HEDGE_TRIGGER=0.22`
+- `BOT_WARMUP_SEC=45`
+- `BOT_COOLDOWN_SEC=120`
+
+This profile is designed to reduce low-quality entries and over-hedging while measuring whether the signal can sustain a realistic directional edge.
 
 ### Web
 
@@ -277,7 +292,8 @@ btcbot/
 | `polymarket_ws` | Continuous | Stream market odds |
 | `discovery` | Every 30s | Find active 5-minute market |
 | `trading` | On price event | Evaluate signal, place trade |
-| `risk` | Every 2s | Check hedge conditions |
+| `risk` | Every 2s | Check hedge conditions for the active position |
+| `sweep` | Every 5m | Resolve ended markets that were missed in the main flow |
 
 ### Database
 
@@ -287,7 +303,7 @@ SQLite with WAL mode. All trades, market outcomes, daily P&L, and price samples 
 |---|---|
 | `markets` | Discovered 5-minute windows and resolution outcomes |
 | `trades` | Every entry and hedge trade |
-| `market_results` | Per-market P&L with win/loss flag |
+| `market_results` | Per-market P&L with win/loss or hedged classification |
 | `daily_pnl` | Aggregated daily statistics |
 | `btc_prices` | BTC price samples (every 5s) |
 | `poly_prices` | Polymarket token price snapshots |
@@ -298,7 +314,7 @@ SQLite with WAL mode. All trades, market outcomes, daily P&L, and price samples 
 pytest tests/ -v
 ```
 
-24 tests covering signal generation (direction detection, edge calculation, warmup/cooldown, probability clamping) and risk management (all limit checks, Kelly sizing, win/loss recording).
+29 tests covering signal generation, hedge-aware accounting, and risk management, including warmup/cooldown handling, probability clamping, one-shot hedging, and restart-safe result math.
 
 ## About stargate5
 

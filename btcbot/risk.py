@@ -96,6 +96,14 @@ class RiskManager:
             )
             return False
 
+        if signal.poly_implied_prob < CONFIG.min_price_to_pay:
+            log.debug(
+                "Price too low: %.3f < %.3f",
+                signal.poly_implied_prob,
+                CONFIG.min_price_to_pay,
+            )
+            return False
+
         # Dynamic min_edge: require more edge in choppy markets
         effective_min_edge = CONFIG.min_edge + choppiness * 0.05
         if signal.edge < effective_min_edge:
@@ -142,6 +150,7 @@ class RiskManager:
         btc_price: float,
         poly_feed: PolymarketFeed,
         choppiness: float = 0.0,
+        opposite_price: float | None = None,
     ) -> bool:
         """Check whether an open position should be hedged.
 
@@ -149,23 +158,50 @@ class RiskManager:
         signalling the bet is likely wrong. Hedging (buying the opposite
         side) caps the loss instead of risking 100%.
 
-        Threshold is lowered in choppy markets to trigger earlier.
+        Guards prevent hedging when it would destroy value:
+        - Too early (price can still recover)
+        - Too close to resolution (let it ride)
+        - Opposite side too expensive (minimal loss reduction)
+        - In choppy markets the threshold is raised (drops reverse often)
         """
-        if position.market.seconds_remaining < 30:
+        if position.is_hedged:
+            return False
+
+        remaining = position.market.seconds_remaining
+        if remaining < 30:
             return False  # Too close to resolution, let it ride
+
+        # Don't hedge in the first half of the window — price can recover
+        if remaining > 150:
+            return False
 
         our_price = poly_feed.get_price(position.token_id)
         if our_price is None:
             return False
 
-        effective_threshold = CONFIG.hedge_trigger_threshold - (choppiness * 0.07)
-        drop = position.fill_price - our_price
-        if drop > effective_threshold:
+        if position.fill_price <= 0:
+            return False
+
+        # Don't hedge when the opposite side is too expensive — the locked-in
+        # loss (entry + hedge - 1.0) would be nearly as bad as losing outright
+        if opposite_price is not None and opposite_price > 0:
+            if opposite_price > 0.85:
+                log.debug(
+                    "Hedge skipped: opposite price %.3f too expensive",
+                    opposite_price,
+                )
+                return False
+
+        # In choppy markets drops reverse more often — raise the bar
+        effective_threshold = max(0.10, CONFIG.hedge_trigger_threshold + (choppiness * 0.05))
+        drop_ratio = (position.fill_price - our_price) / position.fill_price
+        if drop_ratio > effective_threshold:
             log.info(
-                "Hedge triggered: entry=%.3f now=%.3f drop=%.3f",
+                "Hedge triggered: entry=%.3f now=%.3f drop=%.1f%% (threshold=%.1f%%)",
                 position.fill_price,
                 our_price,
-                drop,
+                drop_ratio * 100,
+                effective_threshold * 100,
             )
             return True
         return False

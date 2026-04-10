@@ -26,10 +26,12 @@ from .storage.repo import (
     insert_poly_price,
     insert_trade,
     load_open_position,
+    pnl_since,
     save_open_position,
     set_market_outcome,
     set_market_start_price,
     trailing_loss_streak,
+    trades_for_market,
     update_daily_pnl,
     upsert_market,
     upsert_result,
@@ -37,6 +39,24 @@ from .storage.repo import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _summarize_market_result(trades: list[TradeRecord], outcome: str) -> tuple[float, float, float, float, int | None]:
+    """Return entry cost, hedge cost, payout, net P&L, and outcome classification."""
+    entry_cost = sum(t.amount_usd for t in trades if t.trade_type == "ENTRY")
+    hedge_cost = sum(t.amount_usd for t in trades if t.trade_type == "HEDGE")
+    payout = sum(t.token_quantity for t in trades if t.direction == outcome)
+    net_pnl = payout - entry_cost - hedge_cost
+
+    entries = [t for t in trades if t.trade_type == "ENTRY"]
+    if not entries:
+        outcome_correct = None
+    elif hedge_cost > 0:
+        outcome_correct = None
+    else:
+        outcome_correct = 1 if entries[0].direction == outcome else 0
+
+    return entry_cost, hedge_cost, payout, net_pnl, outcome_correct
 
 
 class Engine:
@@ -111,6 +131,14 @@ class Engine:
         await self._seed_regime()
         try:
             async with connect() as conn:
+                today_ts = int(
+                    datetime.datetime.combine(
+                        datetime.date.today(), datetime.time.min
+                    ).timestamp()
+                )
+                self._risk.daily_pnl = await pnl_since(conn, today_ts)
+                self._risk.sync_streak(await trailing_loss_streak(conn))
+
                 pos_data = await load_open_position(conn)
                 if not pos_data:
                     return
@@ -137,7 +165,12 @@ class Engine:
                     fill_price=pos_data["fill_price"],
                     token_quantity=pos_data["token_quantity"],
                     entry_time=pos_data.get("entry_time", time.time()),
+                    hedge_count=pos_data.get("hedge_count", 0),
+                    hedge_amount_usd=pos_data.get("hedge_amount_usd", 0.0),
+                    hedge_token_quantity=pos_data.get("hedge_token_quantity", 0.0),
+                    hedge_fill_price=pos_data.get("hedge_fill_price"),
                 )
+                self._risk.open_positions = [self._position]
                 self._last_discovery_market_slug = market.slug
                 log.info(
                     "Restored position: %s %s @ $%.3f in %s",
@@ -236,7 +269,7 @@ class Engine:
 
             try:
                 market = await discover_active_market(self._http_client)
-                if market and market.slug != self._last_discovery_market_slug:
+                if market and market.start_ts <= time.time() and market.slug != self._last_discovery_market_slug:
                     self._last_discovery_market_slug = market.slug
                     await self._switch_market(market)
             except Exception:
@@ -249,9 +282,11 @@ class Engine:
         if self._position and self._current_market:
             pos = self._position
             mkt = self._current_market
+            mid_price = self._mid_window_price
+            start_price = self._signal_gen._chainlink_start_price
             self._position = None
             asyncio.create_task(
-                self._resolve_position(pos, mkt), name=f"resolve-{mkt.slug}"
+                self._resolve_position(pos, mkt, mid_price, start_price), name=f"resolve-{mkt.slug}"
             )
 
         log.info(
@@ -276,7 +311,11 @@ class Engine:
             log.warning("Failed to persist market", exc_info=True)
 
         # Record market start price (prefer Chainlink since it matches the oracle)
-        start_price = self._chainlink.latest_price or self._binance.latest_price
+        start_price = 0.0
+        if self._chainlink.latest_ts >= market.start_ts:
+            start_price = self._chainlink.latest_price
+        elif self._binance.latest_ts >= market.start_ts:
+            start_price = self._binance.latest_price
         if start_price > 0:
             try:
                 async with connect() as conn:
@@ -314,7 +353,13 @@ class Engine:
             await asyncio.sleep(15)
         return None
 
-    async def _resolve_position(self, pos: OpenPosition | None = None, mkt: Market | None = None) -> None:
+    async def _resolve_position(
+        self,
+        pos: OpenPosition | None = None,
+        mkt: Market | None = None,
+        mid_window_price: float | None = None,
+        chainlink_start_price: float | None = None,
+    ) -> None:
         """Resolve the current position using the Polymarket oracle outcome."""
         pos = pos or self._position
         mkt = mkt or self._current_market
@@ -327,57 +372,57 @@ class Engine:
             return
 
         btc_end = self._binance.latest_price
-        won = pos.direction == outcome
-
-        # Feed regime detector with reversal data
-        if self._mid_window_price is not None and self._signal_gen._chainlink_start_price is not None:
-            first_half_dir = "UP" if self._mid_window_price >= self._signal_gen._chainlink_start_price else "DOWN"
-            self._regime.record(first_half_dir, outcome)
-
-        # Calculate P&L
-        entry_cost = pos.fill_price * pos.token_quantity
-        payout = pos.token_quantity if won else 0.0
-        net_pnl = payout - entry_cost
-
-        status = "WIN" if won else "LOSS"
-        log.info(
-            "Resolved %s: %s — PnL=$%.2f (entry=$%.3f, payout=$%.2f)",
-            mkt.slug, status, net_pnl, entry_cost, payout,
+        mid_window_price = mid_window_price if mid_window_price is not None else self._mid_window_price
+        chainlink_start_price = (
+            chainlink_start_price
+            if chainlink_start_price is not None
+            else self._signal_gen._chainlink_start_price
         )
 
-        # Auto-redeem winning tokens in live mode (background — oracle may lag)
-        if won and not self._paper_mode and hasattr(self._executor, "redeem"):
-            asyncio.create_task(
-                self._redeem_and_mark(mkt.slug, mkt.condition_id),
-                name=f"redeem-{mkt.slug}",
-            )
+        # Feed regime detector with reversal data
+        if mid_window_price is not None and chainlink_start_price is not None:
+            first_half_dir = "UP" if mid_window_price >= chainlink_start_price else "DOWN"
+            self._regime.record(first_half_dir, outcome)
 
-        self._risk.open_positions.clear()
+        status = "WIN" if pos.direction == outcome else "LOSS"
 
-        # Persist to DB, then sync risk manager from DB (immune to async race)
         try:
             async with connect() as conn:
+                market_trades = await trades_for_market(conn, mkt.slug)
+                entry_cost, hedge_cost, payout, net_pnl, outcome_correct = _summarize_market_result(
+                    market_trades, outcome
+                )
+
+                log.info(
+                    "Resolved %s: %s%s — PnL=$%.2f (entry=$%.2f hedge=$%.2f payout=$%.2f)",
+                    mkt.slug,
+                    status,
+                    " [HEDGED]" if hedge_cost > 0 else "",
+                    net_pnl,
+                    entry_cost,
+                    hedge_cost,
+                    payout,
+                )
+
                 await set_market_outcome(conn, mkt.slug, outcome, btc_end)
                 await upsert_result(
                     conn, mkt.slug,
                     entry_cost=entry_cost,
-                    hedge_cost=0.0,
+                    hedge_cost=hedge_cost,
                     payout=payout,
                     net_pnl=net_pnl,
-                    outcome_correct=1 if won else 0,
+                    outcome_correct=outcome_correct,
                 )
-                # Sync consecutive losses from DB (chronological trade order)
-                self._risk.daily_pnl += net_pnl
-                streak = await trailing_loss_streak(conn)
-                self._risk.sync_streak(streak)
-
-                # Update daily P&L aggregate
-                today = datetime.date.today().isoformat()
                 today_ts = int(
                     datetime.datetime.combine(
                         datetime.date.today(), datetime.time.min
                     ).timestamp()
                 )
+                self._risk.daily_pnl = await pnl_since(conn, today_ts)
+                self._risk.sync_streak(await trailing_loss_streak(conn))
+
+                # Update daily P&L aggregate
+                today = datetime.date.today().isoformat()
                 wins, losses, hedged = await win_loss_counts(conn, since_ts=today_ts)
                 cur = await conn.execute(
                     "SELECT COALESCE(SUM(net_pnl_usd), 0) FROM market_results WHERE resolved_at >= ?",
@@ -397,6 +442,15 @@ class Engine:
                 await clear_open_position(conn)
         except Exception:
             log.warning("Failed to persist resolution", exc_info=True)
+        finally:
+            self._risk.open_positions.clear()
+
+        # Auto-redeem winning tokens in live mode (background — oracle may lag)
+        if pos.direction == outcome and not self._paper_mode and hasattr(self._executor, "redeem"):
+            asyncio.create_task(
+                self._redeem_and_mark(mkt.slug, mkt.condition_id),
+                name=f"redeem-{mkt.slug}",
+            )
 
     async def _redeem_and_mark(self, slug: str, condition_id: str) -> None:
         """Redeem tokens and mark the result as redeemed in the DB."""
@@ -471,6 +525,10 @@ class Engine:
                             fill_price=trade.fill_price,
                             token_quantity=trade.token_quantity,
                             entry_time=self._position.entry_time,
+                            hedge_count=self._position.hedge_count,
+                            hedge_amount_usd=self._position.hedge_amount_usd,
+                            hedge_token_quantity=self._position.hedge_token_quantity,
+                            hedge_fill_price=self._position.hedge_fill_price,
                         )
                 except Exception:
                     log.warning("Failed to persist trade", exc_info=True)
@@ -491,26 +549,50 @@ class Engine:
         """Periodically check if open positions need hedging."""
         while not self._stop.is_set():
             if self._position and self._current_market:
+                opposite_dir = "DOWN" if self._position.direction == "UP" else "UP"
+                opposite_token = self._current_market.token_id_for(opposite_dir)
+                opposite_price = self._polymarket.get_price(opposite_token)
                 if self._risk.should_hedge(
                     self._position,
                     self._binance.latest_price,
                     self._polymarket,
                     choppiness=self._regime.choppiness,
+                    opposite_price=opposite_price,
                 ):
                     hedge = await self._executor.place_hedge(
-                        self._current_market, self._position
+                        self._current_market,
+                        self._position,
+                        estimated_price=opposite_price,
                     )
                     if hedge:
+                        self._position.hedge_count += 1
+                        self._position.hedge_amount_usd += hedge.amount_usd
+                        self._position.hedge_token_quantity += hedge.token_quantity
+                        self._position.hedge_fill_price = hedge.fill_price
                         try:
                             async with connect() as conn:
                                 await insert_trade(conn, hedge)
+                                await save_open_position(
+                                    conn,
+                                    market_slug=self._current_market.slug,
+                                    direction=self._position.direction,
+                                    token_id=self._position.token_id,
+                                    fill_price=self._position.fill_price,
+                                    token_quantity=self._position.token_quantity,
+                                    entry_time=self._position.entry_time,
+                                    hedge_count=self._position.hedge_count,
+                                    hedge_amount_usd=self._position.hedge_amount_usd,
+                                    hedge_token_quantity=self._position.hedge_token_quantity,
+                                    hedge_fill_price=self._position.hedge_fill_price,
+                                )
                         except Exception:
                             log.warning("Failed to persist hedge", exc_info=True)
                         log.info(
-                            "HEDGED %s — bought %s @ $%.3f",
+                            "HEDGED %s — bought %s @ $%.3f ($%.2f)",
                             self._current_market.slug,
                             hedge.direction,
                             hedge.fill_price,
+                            hedge.amount_usd,
                         )
             await _sleep_or_stop(self._stop, CONFIG.risk_check_interval_sec)
 
@@ -570,14 +652,19 @@ class Engine:
                     except Exception:
                         pass
 
-                    won = direction == outcome
-                    payout = qty if won else 0.0
-                    entry_cost = fill_price * qty
-                    net_pnl = payout - entry_cost
+                    async with connect() as conn:
+                        market_trades = await trades_for_market(conn, slug)
+                    entry_cost, hedge_cost, payout, net_pnl, outcome_correct = _summarize_market_result(
+                        market_trades, outcome
+                    )
 
                     log.info(
-                        "Sweep resolved %s: %s (bet %s) — PnL=$%+.2f",
-                        slug, outcome, direction, net_pnl,
+                        "Sweep resolved %s: %s (bet %s)%s — PnL=$%+.2f",
+                        slug,
+                        outcome,
+                        direction,
+                        " [HEDGED]" if hedge_cost > 0 else "",
+                        net_pnl,
                     )
 
                     async with connect() as conn:
@@ -585,20 +672,23 @@ class Engine:
                         await upsert_result(
                             conn, slug,
                             entry_cost=entry_cost,
-                            hedge_cost=0.0,
+                            hedge_cost=hedge_cost,
                             payout=payout,
                             net_pnl=net_pnl,
-                            outcome_correct=1 if won else 0,
+                            outcome_correct=outcome_correct,
                         )
 
-                    # Sync risk manager from DB after all sweep writes
-                    self._risk.daily_pnl += net_pnl
                     async with connect() as conn3:
-                        streak = await trailing_loss_streak(conn3)
-                        self._risk.sync_streak(streak)
+                        today_ts = int(
+                            datetime.datetime.combine(
+                                datetime.date.today(), datetime.time.min
+                            ).timestamp()
+                        )
+                        self._risk.daily_pnl = await pnl_since(conn3, today_ts)
+                        self._risk.sync_streak(await trailing_loss_streak(conn3))
 
                     # Auto-redeem if won in live mode
-                    if won and not self._paper_mode and hasattr(self._executor, "redeem"):
+                    if outcome_correct == 1 and not self._paper_mode and hasattr(self._executor, "redeem"):
                         asyncio.create_task(
                             self._redeem_and_mark(slug, condition_id),
                             name=f"redeem-sweep-{slug}",

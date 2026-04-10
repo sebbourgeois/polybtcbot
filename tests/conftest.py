@@ -5,6 +5,7 @@ import os
 import pytest
 
 import btcbot.config as _cfg
+import btcbot.engine as _engine
 import btcbot.risk as _risk
 import btcbot.signal as _signal
 
@@ -21,5 +22,6 @@ def _isolate_config(monkeypatch):
 
     # Inject into config module and all consuming modules
     monkeypatch.setattr(_cfg, "_CONFIG", fresh)
+    monkeypatch.setattr(_engine, "CONFIG", fresh)
     monkeypatch.setattr(_risk, "CONFIG", fresh)
     monkeypatch.setattr(_signal, "CONFIG", fresh)

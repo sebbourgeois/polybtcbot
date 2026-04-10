@@ -56,6 +56,7 @@ class Config:
     min_position_usd: float
     max_daily_loss_usd: float
     max_consecutive_losses: int
+    min_price_to_pay: float
     max_price_to_pay: float
     hedge_trigger_threshold: float
 
@@ -100,6 +101,7 @@ def load_config() -> Config:
         min_position_usd=_env_float("BOT_MIN_POSITION_USD", 2.0),
         max_daily_loss_usd=_env_float("BOT_MAX_DAILY_LOSS_USD", 50.0),
         max_consecutive_losses=_env_int("BOT_MAX_CONSECUTIVE_LOSSES", 5),
+        min_price_to_pay=_env_float("BOT_MIN_PRICE_TO_PAY", 0.0),
         max_price_to_pay=_env_float("BOT_MAX_PRICE_TO_PAY", 0.65),
         hedge_trigger_threshold=_env_float("BOT_HEDGE_TRIGGER", 0.15),
         regime_window=_env_int("BOT_REGIME_WINDOW", 20),

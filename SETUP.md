@@ -3,7 +3,7 @@
 This guide walks you through configuring btcbot for live trading on Polymarket with real funds.
 
 > [!CAUTION]
-> Live mode places real bets with real money. The strategy has a ~60% expected win rate — roughly 40% of trades lose. Start with a small bankroll you can afford to lose.
+> Live mode places real bets with real money. Do not assume any fixed win rate. Validate the strategy in paper mode with fresh data before risking capital, and start with a bankroll you can afford to lose.
 
 ## Prerequisites
 
@@ -161,15 +161,18 @@ BOT_PAPER_MODE=false
 # Start small. This is the total capital the bot sizes positions against.
 BOT_BANKROLL=100.0
 
-# ── Risk (conservative defaults — adjust after observing paper results)
+# ── Risk (conservative defaults — adjust only after observing paper results)
 BOT_MAX_POSITION_USD=10.0        # Max $10 per trade (start low)
 BOT_MAX_DAILY_LOSS_USD=30.0      # Stop after $30 daily loss
 BOT_MAX_CONSECUTIVE_LOSSES=5     # Pause 15min after 5 straight losses
-BOT_HEDGE_TRIGGER=0.15           # Hedge when token drops 15%
+BOT_MAX_PRICE_TO_PAY=0.45        # Avoid paying too much for already-priced contracts
+BOT_HEDGE_TRIGGER=0.22           # Hedge once after a 22% drop from entry price
 
 # ── Signal thresholds ────────────────────────────────────────────────
-BOT_MIN_EDGE=0.06                # Require 6% edge (slightly stricter than default)
-BOT_MIN_SIGNAL_STRENGTH=0.35     # Slightly higher confidence threshold
+BOT_MIN_EDGE=0.12                # Require stronger directional edge
+BOT_MIN_SIGNAL_STRENGTH=0.65     # Require stronger confirmation
+BOT_WARMUP_SEC=45                # Wait longer before entering
+BOT_COOLDOWN_SEC=120             # Stop new entries with 2m left
 
 # ── Dashboard ────────────────────────────────────────────────────────
 BOT_HOST=0.0.0.0
@@ -177,7 +180,7 @@ BOT_PORT=8500
 ```
 
 > [!TIP]
-> Start with conservative settings (`MAX_POSITION_USD=10`, `MIN_EDGE=0.06`) and widen them only after reviewing your results over a few days.
+> Start with conservative settings (`MAX_POSITION_USD=10`, `MIN_EDGE=0.12`, `MAX_PRICE_TO_PAY=0.45`) and loosen them only after reviewing a meaningful paper sample.
 
 ---
 
@@ -308,6 +311,7 @@ With `-v` (verbose), the bot logs every signal evaluation, trade, and resolution
 11:00:04 INFO  btcbot.engine: New market: btc-updown-5m-1775466300 (ends in 295s)
 11:02:15 INFO  btcbot.engine: TRADE UP btc-updown-5m-1775466300 @ $0.480 ($15.00) — edge=0.082
 11:05:01 INFO  btcbot.engine: Resolved btc-updown-5m-1775466300: WIN — PnL=$16.25
+11:08:01 INFO  btcbot.engine: Resolved btc-updown-5m-1775466600: LOSS [HEDGED] — PnL=$-3.10
 ```
 
 ### Alerts
@@ -330,7 +334,7 @@ curl -s http://localhost:8500/api/live | jq '.daily_pnl'
 | `BOT_MIN_EDGE` | Lower (0.03) | Higher (0.08) |
 | `BOT_MIN_SIGNAL_STRENGTH` | Lower (0.20) | Higher (0.50) |
 | `BOT_WARMUP_SEC` | Shorter (15) | Longer (45) |
-| `BOT_COOLDOWN_SEC` | Shorter (30) | Longer (90) |
+| `BOT_COOLDOWN_SEC` | Shorter (60) | Longer (120) |
 
 ### Position Sizing
 
@@ -346,8 +350,8 @@ curl -s http://localhost:8500/api/live | jq '.daily_pnl'
 |---|---|---|
 | `BOT_MAX_DAILY_LOSS_USD` | Higher (100) | Lower (20) |
 | `BOT_MAX_CONSECUTIVE_LOSSES` | Higher (10) | Lower (3) |
-| `BOT_MAX_PRICE_TO_PAY` | Higher (0.75) | Lower (0.55) |
-| `BOT_HEDGE_TRIGGER` | Higher (0.25, hedge later) | Lower (0.10, hedge sooner) |
+| `BOT_MAX_PRICE_TO_PAY` | Higher (0.65) | Lower (0.45) |
+| `BOT_HEDGE_TRIGGER` | Higher (0.25, hedge later) | Lower (0.15, hedge sooner) |
 
 ### BTC Volatility
 
@@ -375,7 +379,7 @@ curl -s http://localhost:8500/api/live | jq '.daily_pnl'
 
 **No trades being placed**
 - Check that the signal is firing: run with `-v` and look for `edge=` in the logs.
-- The bot only trades during the T+30s → T+240s window of each 5-minute market.
+- The bot only trades during the configured warmup/cooldown window. With the current stricter profile, that is roughly T+45s → T+180s.
 - If edges are small (< 5%), the market is efficiently priced and there's no opportunity.
 
 **Dashboard shows $0 P&L after restart**

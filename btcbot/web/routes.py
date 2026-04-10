@@ -193,16 +193,20 @@ async def trades_page(request: Request):
             slugs = list({t.market_slug for t in trades})
             for slug in slugs:
                 cur = await conn.execute(
-                    "SELECT outcome_correct FROM market_results WHERE market_slug = ?",
+                    "SELECT outcome_correct, hedge_cost_usd FROM market_results WHERE market_slug = ?",
                     (slug,),
                 )
                 row = await cur.fetchone()
                 if row:
-                    results[slug] = row[0]
+                    results[slug] = (row[0], float(row[1] or 0.0))
 
         for t in trades:
-            r = results.get(t.market_slug)
+            result_row = results.get(t.market_slug)
+            r = result_row[0] if result_row else None
+            hedge_cost = result_row[1] if result_row else 0.0
             if t.trade_type == "HEDGE":
+                result = "hedge"
+            elif hedge_cost > 0:
                 result = "hedge"
             elif r == 1:
                 result = "win"
@@ -250,7 +254,7 @@ async def history_page(request: Request):
         days = []
         total_pnl = 0.0
 
-    total_trades = sum(d.trades_count for d in days)
+    total_trades = sum(d.wins + d.losses for d in days)
     total_wins = sum(d.wins for d in days)
     win_rate = (total_wins / total_trades * 100) if total_trades else 0
     best_day = max((d.net_pnl_usd for d in days), default=0)

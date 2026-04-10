@@ -77,3 +77,11 @@ class OpenPosition:
     fill_price: float
     token_quantity: float
     entry_time: float = field(default_factory=time.time)
+    hedge_count: int = 0
+    hedge_amount_usd: float = 0.0
+    hedge_token_quantity: float = 0.0
+    hedge_fill_price: float | None = None
+
+    @property
+    def is_hedged(self) -> bool:
+        return self.hedge_count > 0

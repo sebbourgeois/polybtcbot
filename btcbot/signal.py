@@ -41,7 +41,8 @@ class SignalGenerator:
     def update_chainlink_price(self, price: float, ts: float) -> None:
         self._chainlink_price = price
         if self._chainlink_start_price is None and self._market:
-            self._chainlink_start_price = price
+            if ts >= self._market.start_ts:
+                self._chainlink_start_price = price
 
     def evaluate(
         self,
@@ -98,7 +99,14 @@ class SignalGenerator:
             poly_p = poly_down_price
 
         # 6. Signal strength (0..1)
-        strength = self._calc_strength(edge, mom_5s, mom_15s, time_remaining_sec, choppiness)
+        strength = self._calc_strength(
+            edge,
+            price_delta,
+            mom_5s,
+            mom_15s,
+            time_remaining_sec,
+            choppiness,
+        )
 
         btc_dir = "above" if price_delta >= 0 else "below"
         reason = (
@@ -175,6 +183,7 @@ class SignalGenerator:
     def _calc_strength(
         self,
         edge: float,
+        price_delta: float,
         mom_5s: float,
         mom_15s: float,
         time_remaining_sec: float,
@@ -183,6 +192,14 @@ class SignalGenerator:
         """Signal strength (0..1). Must exceed CONFIG.min_signal_strength to trade."""
         # Edge contribution (primary): 15% edge = max score
         edge_score = min(1.0, abs(edge) / 0.15)
+
+        # Reject reversal setups where BTC has moved materially one way from the
+        # market start, but medium-term momentum is now materially moving back.
+        vol = CONFIG.btc_5m_volatility if CONFIG.btc_5m_volatility > 0 else 30.0
+        delta_significant = abs(price_delta) >= vol * 0.20
+        mom15_significant = abs(mom_15s * 15.0) >= vol * 0.15
+        if delta_significant and mom15_significant and (price_delta > 0) != (mom_15s > 0):
+            return 0.0
 
         # Momentum agreement: short-term and medium-term agree?
         if mom_5s == 0 and mom_15s == 0:

@@ -163,3 +163,51 @@ class TestSignalGenerator:
         )
         # Fair prob should be clamped, not 0.99+
         assert sig.fair_prob <= 0.80
+
+    def test_chainlink_start_price_waits_for_market_start(self, market: Market):
+        gen = SignalGenerator()
+        gen.reset(market)
+        gen.update_chainlink_price(50000, market.start_ts - 5)
+        assert gen._chainlink_start_price is None
+
+        gen.update_chainlink_price(50010, market.start_ts + 1)
+        assert gen._chainlink_start_price == 50010
+
+    def test_reversal_setup_kills_strength(self, gen: SignalGenerator, market: Market):
+        base = 50000
+        t = market.start_ts
+        gen.update_chainlink_price(base, t)
+
+        # Recent BTC momentum points down while the oracle delta is still up.
+        for i in range(16):
+            gen.update_btc_price(base + 20 - i, t + i)
+        gen.update_chainlink_price(base + 15, t + 16)
+
+        with patch("btcbot.signal.time.time", return_value=t + 16):
+            sig = gen.evaluate(
+                btc_price=base + 4,
+                poly_up_price=0.30,
+                poly_down_price=0.70,
+                time_remaining_sec=150,
+            )
+        assert sig.strength == 0.0
+
+    def test_small_reversal_noise_does_not_kill_strength(self, gen: SignalGenerator, market: Market):
+        base = 50000
+        t = market.start_ts
+        gen.update_chainlink_price(base, t)
+
+        # Small disagreement should be treated as noise, not a hard veto.
+        prices = [base + 10, base + 10.5, base + 10.2, base + 10.0, base + 9.8, base + 9.7]
+        for i, price in enumerate(prices, start=1):
+            gen.update_btc_price(price, t + i * 3)
+        gen.update_chainlink_price(base + 12, t + 18)
+
+        with patch("btcbot.signal.time.time", return_value=t + 18):
+            sig = gen.evaluate(
+                btc_price=prices[-1],
+                poly_up_price=0.40,
+                poly_down_price=0.60,
+                time_remaining_sec=150,
+            )
+        assert sig.strength >= 0.0

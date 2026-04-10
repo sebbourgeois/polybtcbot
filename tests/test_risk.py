@@ -78,6 +78,26 @@ class TestCanTrade:
         )
         assert risk.can_trade(expensive) is False
 
+    def test_blocks_low_price(self, risk: RiskManager, monkeypatch):
+        import btcbot.risk as _risk
+
+        stricter = _risk.CONFIG.__class__(**{
+            **_risk.CONFIG.__dict__,
+            "min_price_to_pay": 0.40,
+        })
+        monkeypatch.setattr(_risk, "CONFIG", stricter)
+
+        cheap = Signal(
+            direction="UP",
+            strength=0.8,
+            edge=0.18,
+            btc_momentum=1.0,
+            poly_implied_prob=0.18,
+            fair_prob=0.36,
+            reason="test",
+        )
+        assert risk.can_trade(cheap) is False
+
     def test_blocks_small_edge(self, risk: RiskManager):
         weak = Signal(
             direction="UP",
@@ -126,3 +146,91 @@ class TestRecording:
         risk.reset_daily()
         assert risk.daily_pnl == 0.0
         assert risk.consecutive_losses == 0
+
+
+class TestHedging:
+    @pytest.fixture
+    def hedge_market(self) -> Market:
+        """Market with ~120s remaining — inside the hedge-eligible window."""
+        now = int(time.time())
+        return Market(
+            slug="btc-updown-5m-hedge",
+            condition_id="0xabc",
+            up_token_id="token-up",
+            down_token_id="token-down",
+            start_ts=now - 180,
+            end_ts=now + 120,
+        )
+
+    def test_blocks_repeat_hedge_once_position_already_hedged(self, risk: RiskManager, hedge_market: Market):
+        position = OpenPosition(
+            market=hedge_market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+            hedge_count=1,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.30
+        assert risk.should_hedge(position, 50000, poly) is False
+
+    def test_hedge_uses_relative_drop(self, risk: RiskManager, hedge_market: Market):
+        position = OpenPosition(
+            market=hedge_market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.40
+        assert risk.should_hedge(position, 50000, poly, opposite_price=0.65) is True
+
+    def test_blocks_hedge_too_early(self, risk: RiskManager):
+        """Don't hedge when more than 150s remain — price can still recover."""
+        now = int(time.time())
+        early_market = Market(
+            slug="btc-updown-5m-early",
+            condition_id="0xabc",
+            up_token_id="token-up",
+            down_token_id="token-down",
+            start_ts=now - 60,
+            end_ts=now + 200,
+        )
+        position = OpenPosition(
+            market=early_market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.20  # massive drop
+        assert risk.should_hedge(position, 50000, poly, opposite_price=0.65) is False
+
+    def test_blocks_expensive_opposite(self, risk: RiskManager, hedge_market: Market):
+        """Don't hedge when opposite side > 0.85 — locked-in loss too high."""
+        position = OpenPosition(
+            market=hedge_market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.10  # huge drop
+        assert risk.should_hedge(position, 50000, poly, opposite_price=0.92) is False
+
+    def test_allows_hedge_with_reasonable_opposite(self, risk: RiskManager, hedge_market: Market):
+        """Hedge allowed when opposite is affordable and drop is real."""
+        position = OpenPosition(
+            market=hedge_market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.30  # 40% drop
+        assert risk.should_hedge(position, 50000, poly, opposite_price=0.65) is True

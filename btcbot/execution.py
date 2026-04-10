@@ -128,6 +128,7 @@ class Executor:
         self,
         market: Market,
         position: OpenPosition,
+        estimated_price: float | None = None,
     ) -> TradeRecord | None:
         """Buy the opposite side to hedge a losing position."""
         if not self._client:
@@ -136,7 +137,8 @@ class Executor:
         opposite_dir = "DOWN" if position.direction == "UP" else "UP"
         opposite_token = market.token_id_for(opposite_dir)
         # Buy enough opposite tokens to cover our position
-        hedge_cost = position.token_quantity * 0.50  # approximate at ~$0.50 each
+        est_price = estimated_price if estimated_price and estimated_price > 0 else 0.50
+        hedge_cost = position.token_quantity * est_price
 
         try:
             resp = await asyncio.to_thread(
