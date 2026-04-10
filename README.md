@@ -54,7 +54,7 @@ The bot runs concurrent async tasks for Binance, Chainlink, and Polymarket feeds
 - **Live dashboard** — Dark-themed UI with auto-refreshing panels, trade log, and Chart.js equity curves
 - **Paper trading** — Full simulation with realistic spread modeling, same DB schema as live
 - **CLI tools** — `serve`, `run`, `status`, `history`, `initdb`
-- **JSON API** — `/api/live`, `/api/trades`, `/api/daily-pnl` for external integrations
+- **JSON API** — `/api/live`, `/api/trades`, `/api/daily-pnl`, `/api/stats` for external integrations
 
 ## Quick Start
 
@@ -141,15 +141,17 @@ btcbot serve --paper -v
 | Dashboard | `/` | Live BTC price, active market with progress bar, signal state, open position, P&L stats, recent trades, daily P&L chart |
 | Trades | `/trades` | Full trade log with win/loss/hedge badges and execution details |
 | History | `/history` | Daily P&L breakdown, cumulative equity curve, win rate stats |
+| Stats | `/stats` | Day/week/month/all-time P&L rollups with equity curve, per-bucket P&L bars, and win/loss/hedged distribution |
 
-The dashboard auto-refreshes via [htmx](https://htmx.org) — status panels update every 2 seconds, the trade table every 5 seconds.
+The dashboard auto-refreshes via [htmx](https://htmx.org) — status panels update every 2 seconds, the trade table every 5 seconds. The Stats page uses a period toggle that redraws Chart.js instances in place without a full reload.
 
 **JSON API** for programmatic access:
 
 ```bash
-curl http://localhost:8500/api/live          # Engine state, BTC price, signal, position
-curl http://localhost:8500/api/trades        # Recent trades
-curl http://localhost:8500/api/daily-pnl     # Daily P&L (for charting)
+curl http://localhost:8500/api/live                  # Engine state, BTC price, signal, position
+curl http://localhost:8500/api/trades                # Recent trades
+curl http://localhost:8500/api/daily-pnl             # Daily P&L (for charting)
+curl http://localhost:8500/api/stats?period=week     # Tiles, equity curve, bars, distribution for a period
 ```
 
 ## Configuration
@@ -279,7 +281,7 @@ btcbot/
 │   └── repo.py            # Typed query functions
 └── web/
     ├── app.py             # FastAPI app with engine lifespan
-    ├── routes.py          # 8 HTML + 3 JSON endpoints
+    ├── routes.py          # 6 HTML + 5 JSON endpoints
     ├── static/app.css     # Dark theme
     └── templates/         # Jinja2 + htmx auto-refresh
 ```
@@ -314,7 +316,7 @@ SQLite with WAL mode. All trades, market outcomes, daily P&L, and price samples 
 pytest tests/ -v
 ```
 
-29 tests covering signal generation, hedge-aware accounting, and risk management, including warmup/cooldown handling, probability clamping, one-shot hedging, and restart-safe result math.
+56 tests covering signal generation, hedge-aware accounting, risk management, the stats-page aggregation helpers (period bounds, bucket zero-fill, ISO-week rollup), and the `/api/stats` JSON endpoint, including warmup/cooldown handling, probability clamping, one-shot hedging, and restart-safe result math.
 
 ## About stargate5
 
