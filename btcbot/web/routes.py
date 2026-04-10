@@ -433,7 +433,8 @@ async def stats_page(request: Request):
 
 @router.get("/api/stats")
 async def api_stats(period: str = "day"):
-    if period not in ("day", "week", "month", "all"):
-        raise HTTPException(status_code=400, detail="invalid period")
-    payload = await _build_stats_payload(period)
+    try:
+        payload = await _build_stats_payload(period)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JSONResponse(payload)

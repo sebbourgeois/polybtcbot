@@ -61,6 +61,9 @@ def client(tmp_path, monkeypatch):
     test_config = dataclasses.replace(_db_module.CONFIG, db_path=db_path)
     monkeypatch.setattr(_db_module, "CONFIG", test_config)
 
+    from btcbot.web import routes as _routes_module
+    monkeypatch.setattr(_routes_module, "CONFIG", test_config)
+
     # Create an empty DB with schema applied so routes that query succeed.
     _seed(db_path, [])
 
