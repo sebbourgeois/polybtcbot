@@ -77,6 +77,7 @@ async def stats_db(tmp_path: Path):
 
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
     finally:
