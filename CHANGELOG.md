@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] — 2026-04-10
+### Fixed
+- CHANGELOG `[1.0.0]` heading now uses ` - ` (hyphen) instead of ` — ` (em-dash) to match the Keep a Changelog format expected by changelog parsers.
+
+## [1.0.0] - 2026-04-10
 
 ### Added
 - Stats page at `/stats` with day/week/month/all-time P&L rollups, 8 summary tiles (net P&L, trades, win rate, wins/losses/hedged, best/worst market), and three Chart.js panels (equity curve, per-bucket P&L bars, win/loss/hedged distribution doughnut).
