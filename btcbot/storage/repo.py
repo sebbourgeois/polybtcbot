@@ -486,3 +486,85 @@ def period_bounds(period: str) -> tuple[int, str]:
     if period == "all":
         return 0, "week"
     raise ValueError(f"unknown period: {period!r}")
+
+
+@dataclass
+class StatsSummaryRow:
+    net_pnl: float
+    trades: int
+    wins: int
+    losses: int
+    hedged: int
+    win_rate: float  # wins / (wins + losses), 0.0 if denom == 0
+    best_market: tuple[str, float] | None  # (slug, net_pnl_usd) or None
+    worst_market: tuple[str, float] | None
+
+
+async def oldest_resolved_at(conn: aiosqlite.Connection) -> int | None:
+    """Return the earliest resolved_at timestamp in market_results, or None if empty."""
+    cur = await conn.execute(
+        "SELECT MIN(resolved_at) FROM market_results WHERE resolved_at IS NOT NULL"
+    )
+    row = await cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
+
+
+async def stats_summary(
+    conn: aiosqlite.Connection, since_ts: int
+) -> StatsSummaryRow:
+    """Aggregate market_results for rows with resolved_at >= since_ts."""
+    cur = await conn.execute(
+        """SELECT
+             COALESCE(SUM(net_pnl_usd), 0.0) AS net_pnl,
+             COUNT(*) AS trades,
+             COALESCE(SUM(CASE WHEN outcome_correct = 1 THEN 1 ELSE 0 END), 0) AS wins,
+             COALESCE(SUM(CASE WHEN outcome_correct = 0 THEN 1 ELSE 0 END), 0) AS losses,
+             COALESCE(SUM(CASE WHEN outcome_correct IS NULL THEN 1 ELSE 0 END), 0) AS hedged
+           FROM market_results
+           WHERE resolved_at >= ?""",
+        (since_ts,),
+    )
+    row = await cur.fetchone()
+    net_pnl = float(row["net_pnl"])
+    trades = int(row["trades"])
+    wins = int(row["wins"])
+    losses = int(row["losses"])
+    hedged = int(row["hedged"])
+    denom = wins + losses
+    win_rate = (wins / denom) if denom > 0 else 0.0
+
+    best_market: tuple[str, float] | None = None
+    worst_market: tuple[str, float] | None = None
+    if trades > 0:
+        cur_best = await conn.execute(
+            """SELECT market_slug, net_pnl_usd FROM market_results
+               WHERE resolved_at >= ?
+               ORDER BY net_pnl_usd DESC LIMIT 1""",
+            (since_ts,),
+        )
+        brow = await cur_best.fetchone()
+        if brow is not None:
+            best_market = (str(brow["market_slug"]), float(brow["net_pnl_usd"]))
+
+        cur_worst = await conn.execute(
+            """SELECT market_slug, net_pnl_usd FROM market_results
+               WHERE resolved_at >= ?
+               ORDER BY net_pnl_usd ASC LIMIT 1""",
+            (since_ts,),
+        )
+        wrow = await cur_worst.fetchone()
+        if wrow is not None:
+            worst_market = (str(wrow["market_slug"]), float(wrow["net_pnl_usd"]))
+
+    return StatsSummaryRow(
+        net_pnl=round(net_pnl, 2),
+        trades=trades,
+        wins=wins,
+        losses=losses,
+        hedged=hedged,
+        win_rate=win_rate,
+        best_market=best_market,
+        worst_market=worst_market,
+    )
