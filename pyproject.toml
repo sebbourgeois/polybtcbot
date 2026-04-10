@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "btcbot"
-version = "0.1.0"
+version = "1.0.0"
 description = "Polymarket 5-minute BTC Up/Down trading bot — latency arbitrage on binary crypto markets"
 requires-python = ">=3.11"
 license = { text = "MIT" }
