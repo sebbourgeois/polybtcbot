@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -355,3 +355,85 @@ async def api_hourly_pnl(hours: int = 24):
     async with connect() as conn:
         rows = await repo.hourly_pnl(conn, hours=hours)
     return JSONResponse(rows)
+
+
+# ── Stats page ─────────────────────────────────────────────────────────
+
+
+_ALL_TIME_MONTHLY_THRESHOLD_SEC = 2 * 365 * 86400  # switch to monthly grain if data spans > 2y
+
+
+async def _build_stats_payload(period: str) -> dict:
+    """Shared backend logic for both /stats (HTML) and /api/stats (JSON)."""
+    since_ts, grain = repo.period_bounds(period)
+    async with connect() as conn:
+        if period == "all":
+            oldest = await repo.oldest_resolved_at(conn)
+            if oldest is not None and (int(time.time()) - oldest) > _ALL_TIME_MONTHLY_THRESHOLD_SEC:
+                grain = "month"
+        summary = await repo.stats_summary(conn, since_ts)
+        buckets = await repo.stats_buckets(conn, since_ts, grain)
+    equity = repo.stats_equity(buckets)
+
+    tiles = {
+        "net_pnl": round(summary.net_pnl, 2),
+        "trades": summary.trades,
+        "win_rate": round(summary.win_rate, 4),
+        "wins": summary.wins,
+        "losses": summary.losses,
+        "hedged": summary.hedged,
+        "best_market": (
+            {"slug": summary.best_market[0], "pnl": round(summary.best_market[1], 2)}
+            if summary.best_market is not None else None
+        ),
+        "worst_market": (
+            {"slug": summary.worst_market[0], "pnl": round(summary.worst_market[1], 2)}
+            if summary.worst_market is not None else None
+        ),
+    }
+    return {
+        "period": period,
+        "since_ts": since_ts,
+        "grain": grain,
+        "tiles": tiles,
+        "equity": [{"bucket": e.bucket, "value": e.value} for e in equity],
+        "bars": [
+            {"bucket": b.bucket, "net_pnl": b.net_pnl, "trades": b.trades} for b in buckets
+        ],
+        "distribution": {
+            "wins": summary.wins,
+            "losses": summary.losses,
+            "hedged": summary.hedged,
+        },
+    }
+
+
+@router.get("/stats", response_class=HTMLResponse)
+async def stats_page(request: Request):
+    ctx = _base_ctx(request, "stats")
+    try:
+        initial = await _build_stats_payload("day")
+    except Exception:
+        initial = {
+            "period": "day",
+            "since_ts": 0,
+            "grain": "hour",
+            "tiles": {
+                "net_pnl": 0.0, "trades": 0, "win_rate": 0.0,
+                "wins": 0, "losses": 0, "hedged": 0,
+                "best_market": None, "worst_market": None,
+            },
+            "equity": [],
+            "bars": [],
+            "distribution": {"wins": 0, "losses": 0, "hedged": 0},
+        }
+    ctx["initial_stats"] = initial
+    return templates.TemplateResponse(request, "stats.html", ctx)
+
+
+@router.get("/api/stats")
+async def api_stats(period: str = "day"):
+    if period not in ("day", "week", "month", "all"):
+        raise HTTPException(status_code=400, detail="invalid period")
+    payload = await _build_stats_payload(period)
+    return JSONResponse(payload)

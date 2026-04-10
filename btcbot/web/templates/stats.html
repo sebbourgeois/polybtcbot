@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Stats — btcbot{% endblock %}
+
+{% block content %}
+<h1>Stats</h1>
+<script type="application/json" id="initial-stats">{{ initial_stats|tojson|safe }}</script>
+{% endblock %}
