@@ -24,6 +24,7 @@
       <a href="/" {% if active_page == 'dashboard' %}class="active"{% endif %}>Dashboard</a>
       <a href="/trades" {% if active_page == 'trades' %}class="active"{% endif %}>Trades</a>
       <a href="/history" {% if active_page == 'history' %}class="active"{% endif %}>History</a>
+      <a href="/stats" {% if active_page == 'stats' %}class="active"{% endif %}>Stats</a>
     </nav>
     <div class="bot-status">
       {% if engine_running %}

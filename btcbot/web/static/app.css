@@ -382,3 +382,68 @@ footer {
 .progress-bar .fill.green  { background: var(--pos); }
 .progress-bar .fill.yellow { background: var(--warn); }
 .progress-bar .fill.red    { background: var(--neg); }
+
+/* ── Stats page period toggle ────────────────────────────────────── */
+.period-toggle {
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 32px;
+}
+
+.period-toggle button {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.period-toggle button:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+}
+
+.period-toggle button.active {
+  background: var(--accent);
+  color: #0b0e14;
+}
+
+/* Loading overlay for chart panels during period switch */
+.chart-wrap.is-loading {
+  opacity: 0.4;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+/* Two-line stat variant for Best/Worst market tiles */
+.stat.two-line .slug {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Distribution chart should not stretch full width */
+.chart-wrap.distribution {
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.chart-wrap.distribution canvas {
+  max-height: 260px;
+}
