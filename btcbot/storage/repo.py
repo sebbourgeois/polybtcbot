@@ -642,16 +642,14 @@ def _expected_bucket_labels(
 
 
 def _label_from_day(day_str: str, grain: str) -> str:
-    """Given a '%Y-%m-%d' string, return the bucket label at the requested grain."""
+    """Given a '%Y-%m-%d' string, return the bucket label at week or month grain."""
     d = datetime.date.fromisoformat(day_str)
-    if grain == "day":
-        return day_str
     if grain == "week":
         iso_year, iso_week, _ = d.isocalendar()
         return f"{iso_year}-W{iso_week:02d}"
     if grain == "month":
         return f"{d.year:04d}-{d.month:02d}"
-    raise ValueError(f"unexpected grain for day rollup: {grain!r}")
+    raise ValueError(f"_label_from_day only handles week/month grain, got {grain!r}")
 
 
 async def stats_buckets(
