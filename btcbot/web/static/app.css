@@ -414,7 +414,7 @@ footer {
 
 .period-toggle button.active {
   background: var(--accent);
-  color: #0b0e14;
+  color: var(--bg);
 }
 
 /* Loading overlay for chart panels during period switch */

@@ -80,6 +80,7 @@
 (function() {
   const charts = { equity: null, bars: null, distribution: null };
   let currentPeriod = "day";
+  let inFlight = false;
 
   /* ── Formatting helpers ─────────────────────────────────────── */
   function formatUsd(n) {
@@ -289,9 +290,10 @@
     const barValues = data.bars.map(b => b.net_pnl);
     const barTrades = data.bars.map(b => b.trades);
 
-    const isEmpty = data.bars.length === 0;
-    toggleEmpty("equity", isEmpty);
-    toggleEmpty("bars", isEmpty);
+    const equityIsEmpty = data.equity.length === 0;
+    const barsIsEmpty = data.bars.length === 0;
+    toggleEmpty("equity", equityIsEmpty);
+    toggleEmpty("bars", barsIsEmpty);
 
     document.getElementById("bars-title").textContent = barsTitleByGrain[grain] || "P&L";
 
@@ -299,7 +301,7 @@
     const barsCanvas = document.getElementById("chart-bars");
     const distCanvas = document.getElementById("chart-distribution");
 
-    if (!isEmpty) {
+    if (!equityIsEmpty) {
       if (!charts.equity) {
         charts.equity = createEquityChart(equityCanvas, equityLabels, equityValues);
       } else {
@@ -307,7 +309,9 @@
         charts.equity.data.datasets[0].data = equityValues;
         charts.equity.update();
       }
+    }
 
+    if (!barsIsEmpty) {
       if (!charts.bars) {
         charts.bars = createBarsChart(barsCanvas, barLabels, barValues, barTrades);
       } else {
@@ -361,7 +365,8 @@
   }
 
   async function switchPeriod(period) {
-    if (period === currentPeriod) return;
+    if (period === currentPeriod || inFlight) return;
+    inFlight = true;
     document.querySelectorAll(".period-toggle button").forEach(b => {
       b.classList.toggle("active", b.dataset.period === period);
     });
@@ -376,6 +381,7 @@
       console.error("stats fetch failed", err);
     } finally {
       setLoading(false);
+      inFlight = false;
     }
   }
 
