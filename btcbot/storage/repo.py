@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import time
 from dataclasses import dataclass
@@ -449,3 +450,39 @@ async def get_state(
     )
     row = await cur.fetchone()
     return (row["value"], row["updated_at"]) if row else None
+
+
+# ── Stats page helpers ─────────────────────────────────────────────────
+
+
+def _now_local() -> datetime.datetime:
+    """Return naive local-time "now". Isolated for test monkey-patching."""
+    return datetime.datetime.now()
+
+
+def period_bounds(period: str) -> tuple[int, str]:
+    """Return (since_ts, default_grain) for a Stats-page period.
+
+    Periods are calendar-based in local system time:
+      - day   → midnight today → hourly buckets
+      - week  → Monday 00:00 of current ISO week → daily buckets
+      - month → day 1 00:00 of current month → daily buckets
+      - all   → epoch (0) → weekly buckets (route handler may override to monthly)
+    """
+    if period == "day":
+        now = _now_local()
+        start = datetime.datetime(now.year, now.month, now.day)
+        return int(start.timestamp()), "hour"
+    if period == "week":
+        now = _now_local()
+        today = datetime.date(now.year, now.month, now.day)
+        monday = today - datetime.timedelta(days=today.weekday())  # weekday: Mon=0
+        start = datetime.datetime(monday.year, monday.month, monday.day)
+        return int(start.timestamp()), "day"
+    if period == "month":
+        now = _now_local()
+        start = datetime.datetime(now.year, now.month, 1)
+        return int(start.timestamp()), "day"
+    if period == "all":
+        return 0, "week"
+    raise ValueError(f"unknown period: {period!r}")
