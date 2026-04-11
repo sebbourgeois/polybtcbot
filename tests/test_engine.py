@@ -28,7 +28,7 @@ class TestSummarizeMarketResult:
         assert net_pnl == 20.0
         assert outcome_correct == 1
 
-    def test_hedged_market_uses_both_legs_and_not_win_loss(self):
+    def test_hedged_market_classifies_on_entry_direction(self):
         trades = [
             TradeRecord(
                 market_slug="m1",
@@ -61,4 +61,6 @@ class TestSummarizeMarketResult:
         assert hedge_cost == 18.0
         assert payout == 40.0
         assert net_pnl == 2.0
-        assert outcome_correct is None
+        # Entry was UP, outcome is DOWN — classified as incorrect entry
+        # regardless of whether the hedge bailed the P&L out.
+        assert outcome_correct == 0

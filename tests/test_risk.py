@@ -149,6 +149,18 @@ class TestRecording:
 
 
 class TestHedging:
+    @pytest.fixture(autouse=True)
+    def _enable_hedging(self, monkeypatch):
+        """Hedging is disabled by default in CONFIG; re-enable for these tests
+        so the underlying trigger logic is still covered."""
+        import btcbot.risk as _risk
+
+        enabled = _risk.CONFIG.__class__(**{
+            **_risk.CONFIG.__dict__,
+            "hedge_enabled": True,
+        })
+        monkeypatch.setattr(_risk, "CONFIG", enabled)
+
     @pytest.fixture
     def hedge_market(self) -> Market:
         """Market with ~120s remaining — inside the hedge-eligible window."""
@@ -234,3 +246,27 @@ class TestHedging:
         poly = MagicMock()
         poly.get_price.return_value = 0.30  # 40% drop
         assert risk.should_hedge(position, 50000, poly, opposite_price=0.65) is True
+
+
+class TestHedgingDisabledByDefault:
+    def test_should_hedge_returns_false_when_config_disabled(self, risk: RiskManager):
+        """With hedge_enabled=False (current default), no setup ever hedges."""
+        now = int(time.time())
+        market = Market(
+            slug="btc-updown-5m-disabled",
+            condition_id="0xabc",
+            up_token_id="token-up",
+            down_token_id="token-down",
+            start_ts=now - 180,
+            end_ts=now + 120,
+        )
+        position = OpenPosition(
+            market=market,
+            direction="UP",
+            token_id="token-up",
+            fill_price=0.50,
+            token_quantity=10,
+        )
+        poly = MagicMock()
+        poly.get_price.return_value = 0.20  # catastrophic drop — would normally hedge
+        assert risk.should_hedge(position, 50000, poly, opposite_price=0.65) is False
