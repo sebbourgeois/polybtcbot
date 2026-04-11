@@ -164,6 +164,8 @@ class RiskManager:
         - Opposite side too expensive (minimal loss reduction)
         - In choppy markets the threshold is raised (drops reverse often)
         """
+        if not CONFIG.hedge_enabled:
+            return False
         if position.is_hedged:
             return False
 

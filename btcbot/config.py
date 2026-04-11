@@ -59,6 +59,7 @@ class Config:
     min_price_to_pay: float
     max_price_to_pay: float
     hedge_trigger_threshold: float
+    hedge_enabled: bool
 
     # --- Regime detection ---
     regime_window: int
@@ -104,9 +105,10 @@ def load_config() -> Config:
         min_price_to_pay=_env_float("BOT_MIN_PRICE_TO_PAY", 0.0),
         max_price_to_pay=_env_float("BOT_MAX_PRICE_TO_PAY", 0.65),
         hedge_trigger_threshold=_env_float("BOT_HEDGE_TRIGGER", 0.15),
+        hedge_enabled=_env_bool("BOT_HEDGE_ENABLED", False),
         regime_window=_env_int("BOT_REGIME_WINDOW", 20),
         discovery_interval_sec=_env_float("BOT_DISCOVERY_INTERVAL_SEC", 30.0),
-        warmup_sec=_env_float("BOT_WARMUP_SEC", 30.0),
+        warmup_sec=_env_float("BOT_WARMUP_SEC", 60.0),
         cooldown_sec=_env_float("BOT_COOLDOWN_SEC", 60.0),
         risk_check_interval_sec=_env_float("BOT_RISK_CHECK_SEC", 2.0),
         host=_env_str("BOT_HOST", "0.0.0.0"),

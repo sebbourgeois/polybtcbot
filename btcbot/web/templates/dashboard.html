@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', function() {
           scales: {
             x: sharedScaleX,
             y: {
-              ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(0) },
+              ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(2) },
               grid: { color: '#2d333b' },
             },
           },
@@ -115,7 +115,7 @@ document.addEventListener('DOMContentLoaded', function() {
           scales: {
             x: sharedScaleX,
             y: {
-              ticks: { color: '#58a6ff', callback: v => '$' + v.toFixed(0) },
+              ticks: { color: '#58a6ff', callback: v => '$' + v.toFixed(2) },
               grid: { color: '#2d333b' },
             },
           },
