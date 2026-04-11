@@ -44,5 +44,4 @@ htmlcov/
 check.py
 CLAUDE.md
 check-wallet.py
-redeem.py
 reconcile-orders.py
