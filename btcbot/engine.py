@@ -51,9 +51,11 @@ def _summarize_market_result(trades: list[TradeRecord], outcome: str) -> tuple[f
     entries = [t for t in trades if t.trade_type == "ENTRY"]
     if not entries:
         outcome_correct = None
-    elif hedge_cost > 0:
-        outcome_correct = None
     else:
+        # Classify on the entry direction regardless of hedging. A hedged
+        # market that wins on the hedge side is still an "incorrect" entry,
+        # which matters for stats and — critically — for the auto-redeem
+        # trigger which gates on this field.
         outcome_correct = 1 if entries[0].direction == outcome else 0
 
     return entry_cost, hedge_cost, payout, net_pnl, outcome_correct
@@ -386,6 +388,7 @@ class Engine:
 
         status = "WIN" if pos.direction == outcome else "LOSS"
 
+        payout = 0.0  # initialized so the auto-redeem gate below works even on exception
         try:
             async with connect() as conn:
                 market_trades = await trades_for_market(conn, mkt.slug)
@@ -445,8 +448,9 @@ class Engine:
         finally:
             self._risk.open_positions.clear()
 
-        # Auto-redeem winning tokens in live mode (background — oracle may lag)
-        if pos.direction == outcome and not self._paper_mode and hasattr(self._executor, "redeem"):
+        # Auto-redeem whenever we hold any winning shares — covers plain wins
+        # AND hedged markets where the hedge side is the winner.
+        if payout > 0 and not self._paper_mode and hasattr(self._executor, "redeem"):
             asyncio.create_task(
                 self._redeem_and_mark(mkt.slug, mkt.condition_id),
                 name=f"redeem-{mkt.slug}",
@@ -687,8 +691,9 @@ class Engine:
                         self._risk.daily_pnl = await pnl_since(conn3, today_ts)
                         self._risk.sync_streak(await trailing_loss_streak(conn3))
 
-                    # Auto-redeem if won in live mode
-                    if outcome_correct == 1 and not self._paper_mode and hasattr(self._executor, "redeem"):
+                    # Auto-redeem if we hold any winning shares (includes hedged
+                    # markets where the hedge won).
+                    if payout > 0 and not self._paper_mode and hasattr(self._executor, "redeem"):
                         asyncio.create_task(
                             self._redeem_and_mark(slug, condition_id),
                             name=f"redeem-sweep-{slug}",

@@ -43,6 +43,6 @@ htmlcov/
 # MISC
 check.py
 CLAUDE.md
-
-# Worktrees (isolated feature branches)
-.worktrees/
+check-wallet.py
+redeem.py
+reconcile-orders.py

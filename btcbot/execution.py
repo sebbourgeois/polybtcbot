@@ -23,6 +23,11 @@ def _log_unredeemed(msg: str) -> None:
         f.write(f"{ts}  {msg}\n")
 
 
+def _is_fok_kill(exc: BaseException) -> bool:
+    """True when an exception is a Polymarket 'FOK couldn't fill' rejection."""
+    return "couldn't be fully filled" in str(exc) or "FOK orders are" in str(exc)
+
+
 def _build_clob_client() -> Any:
     """Create an authenticated ClobClient. Returns None if no private key."""
     if not CONFIG.private_key:
@@ -77,47 +82,53 @@ class Executor:
             resp = await asyncio.to_thread(
                 self._fok_buy, token_id, amount_usd
             )
-            if resp and resp.get("orderID"):
-                fill_price = float(resp.get("averagePrice", signal.poly_implied_prob))
-                qty = amount_usd / fill_price if fill_price > 0 else 0
+            if resp:
+                filled_size = float(resp["filled_size"])
+                fill_price = float(resp["fill_price"])
+                real_amount_usd = filled_size * fill_price
                 return TradeRecord(
                     market_slug=market.slug,
                     trade_type="ENTRY",
                     direction=signal.direction,
                     token_id=token_id,
                     side="BUY",
-                    amount_usd=amount_usd,
+                    amount_usd=real_amount_usd,
                     fill_price=fill_price,
-                    token_quantity=qty,
+                    token_quantity=filled_size,
                     signal_strength=signal.strength,
                     signal_edge=signal.edge,
-                    order_id=resp.get("orderID", ""),
+                    order_id=resp["orderID"],
                 )
-        except Exception:
-            log.warning("FOK order failed", exc_info=True)
+        except Exception as e:
+            # FOK rejection (couldn't fully fill) is expected — log quietly
+            # and fall back to a limit order. Anything else is real.
+            if _is_fok_kill(e):
+                log.info("FOK unfilled — falling back to limit order")
+            else:
+                log.warning("FOK order failed unexpectedly", exc_info=True)
 
-        # Fallback: aggressive limit order
+        # Fallback: aggressive limit order. _limit_buy returns real fill info
+        # (or None if nothing filled) so we never record phantom trades.
         try:
             resp = await asyncio.to_thread(
                 self._limit_buy, token_id, amount_usd, signal.poly_implied_prob
             )
-            if resp and resp.get("orderID"):
-                # Wait briefly for fill
-                await asyncio.sleep(2.0)
-                fill_price = signal.poly_implied_prob + CONFIG.limit_slippage
-                qty = amount_usd / fill_price if fill_price > 0 else 0
+            if resp:
+                filled_size = float(resp["filled_size"])
+                fill_price = float(resp["fill_price"])
+                real_amount_usd = filled_size * fill_price
                 return TradeRecord(
                     market_slug=market.slug,
                     trade_type="ENTRY",
                     direction=signal.direction,
                     token_id=token_id,
                     side="BUY",
-                    amount_usd=amount_usd,
+                    amount_usd=real_amount_usd,
                     fill_price=fill_price,
-                    token_quantity=qty,
+                    token_quantity=filled_size,
                     signal_strength=signal.strength,
                     signal_edge=signal.edge,
-                    order_id=resp.get("orderID", ""),
+                    order_id=resp["orderID"],
                 )
         except Exception:
             log.error("Limit order also failed", exc_info=True)
@@ -130,39 +141,61 @@ class Executor:
         position: OpenPosition,
         estimated_price: float | None = None,
     ) -> TradeRecord | None:
-        """Buy the opposite side to hedge a losing position."""
+        """Buy the opposite side to hedge a losing position.
+
+        Tries FOK first for instant fill; if it can't be fully filled, falls
+        back to an aggressive GTC limit at ``est_price + limit_slippage``.
+        Only returns a TradeRecord if real shares were acquired.
+        """
         if not self._client:
             return None
 
         opposite_dir = "DOWN" if position.direction == "UP" else "UP"
         opposite_token = market.token_id_for(opposite_dir)
-        # Buy enough opposite tokens to cover our position
         est_price = estimated_price if estimated_price and estimated_price > 0 else 0.50
         hedge_cost = position.token_quantity * est_price
+
+        def _build_hedge_record(resp: dict) -> TradeRecord:
+            filled_size = float(resp["filled_size"])
+            fill_price = float(resp["fill_price"])
+            return TradeRecord(
+                market_slug=market.slug,
+                trade_type="HEDGE",
+                direction=opposite_dir,
+                token_id=opposite_token,
+                side="BUY",
+                amount_usd=filled_size * fill_price,
+                fill_price=fill_price,
+                token_quantity=filled_size,
+                signal_strength=0.0,
+                signal_edge=0.0,
+                order_id=resp["orderID"],
+            )
 
         try:
             resp = await asyncio.to_thread(
                 self._fok_buy, opposite_token, hedge_cost
             )
-            if resp and resp.get("orderID"):
-                fill_price = float(resp.get("averagePrice", 0.50))
-                qty = hedge_cost / fill_price if fill_price > 0 else 0
-                return TradeRecord(
-                    market_slug=market.slug,
-                    trade_type="HEDGE",
-                    direction=opposite_dir,
-                    token_id=opposite_token,
-                    side="BUY",
-                    amount_usd=hedge_cost,
-                    fill_price=fill_price,
-                    token_quantity=qty,
-                    signal_strength=0.0,
-                    signal_edge=0.0,
-                    order_id=resp.get("orderID", ""),
-                )
-        except Exception:
-            log.error("Hedge order failed", exc_info=True)
+            if resp:
+                return _build_hedge_record(resp)
+        except Exception as e:
+            if _is_fok_kill(e):
+                log.info("Hedge FOK unfilled — falling back to limit order")
+            else:
+                log.warning("Hedge FOK failed unexpectedly", exc_info=True)
 
+        # Fallback: aggressive limit order so the position doesn't stay
+        # unhedged on a thin book.
+        try:
+            resp = await asyncio.to_thread(
+                self._limit_buy, opposite_token, hedge_cost, est_price
+            )
+            if resp:
+                return _build_hedge_record(resp)
+        except Exception:
+            log.error("Hedge limit order also failed", exc_info=True)
+
+        log.warning("Hedge failed for %s — position remains unprotected", market.slug)
         return None
 
     async def redeem(self, condition_id: str) -> str | None:
@@ -227,7 +260,14 @@ class Executor:
         return tx_hash.hex()
 
     def _fok_buy(self, token_id: str, amount_usd: float) -> dict | None:
-        """Synchronous FOK market buy (runs in thread)."""
+        """Synchronous FOK market buy (runs in thread).
+
+        Posts a Fill-or-Kill market order, then queries ``get_order`` for
+        the authoritative ``size_matched`` and ``price``. Returns a dict with
+        ``orderID``, ``filled_size``, ``fill_price``, ``status`` — or ``None``
+        if the FOK was rejected. A rejected FOK raises ``PolyApiException``
+        from the underlying client, which propagates to the caller.
+        """
         from py_clob_client.clob_types import MarketOrderArgs, OrderType
 
         args = MarketOrderArgs(
@@ -236,16 +276,64 @@ class Executor:
             side="BUY",
         )
         signed = self._client.create_market_order(args)
-        return self._client.post_order(signed, OrderType.FOK)
+        resp = self._client.post_order(signed, OrderType.FOK)
+        if not resp or not resp.get("orderID"):
+            return None
+
+        order_id = resp["orderID"]
+        filled, real_price, status = self._query_fill(order_id)
+        if filled <= 0:
+            # FOK succeeded per the API but get_order reported no fill —
+            # treat as no trade to avoid recording a phantom.
+            log.warning("FOK %s reported success but size_matched=0", order_id[:20])
+            return None
+
+        return {
+            "orderID": order_id,
+            "filled_size": filled,
+            "fill_price": real_price,
+            "status": status,
+        }
+
+    def _query_fill(self, order_id: str) -> tuple[float, float, str]:
+        """Return (filled_size, fill_price, status) for ``order_id``.
+
+        Queries ``get_order`` once. Returns zeros with status ``UNKNOWN`` if
+        the lookup fails — callers must handle the zero case.
+        """
+        try:
+            order = self._client.get_order(order_id)
+        except Exception:
+            log.warning("get_order failed for %s", order_id, exc_info=True)
+            return 0.0, 0.0, "UNKNOWN"
+        if not order:
+            return 0.0, 0.0, "UNKNOWN"
+        filled = float(order.get("size_matched") or 0)
+        price = float(order.get("price") or 0)
+        status = order.get("status") or "UNKNOWN"
+        return filled, price, status
 
     def _limit_buy(
         self, token_id: str, amount_usd: float, mid_price: float
     ) -> dict | None:
-        """Synchronous aggressive limit buy (runs in thread)."""
+        """Synchronous aggressive limit buy (runs in thread).
+
+        Posts a GTC limit order, then polls ``get_order`` to read the real
+        ``size_matched``. If the order partially filled, the remainder is
+        canceled. If nothing filled, the order is canceled and ``None`` is
+        returned so the caller does not record a phantom trade.
+
+        Returns a dict with keys ``orderID``, ``filled_size``, ``fill_price``,
+        and ``status`` reflecting the real on-exchange state.
+        """
         from py_clob_client.clob_types import OrderArgs, OrderType
 
         price = min(mid_price + CONFIG.limit_slippage, 0.99)
-        size = amount_usd / price if price > 0 else 0
+        if price <= 0:
+            return None
+        size = amount_usd / price
+        if size <= 0:
+            return None
 
         args = OrderArgs(
             token_id=token_id,
@@ -254,4 +342,41 @@ class Executor:
             side="BUY",
         )
         signed = self._client.create_order(args)
-        return self._client.post_order(signed, OrderType.GTC)
+        resp = self._client.post_order(signed, OrderType.GTC)
+        if not resp or not resp.get("orderID"):
+            return None
+
+        order_id = resp["orderID"]
+
+        filled = 0.0
+        real_price = price
+        status = "LIVE"
+        for _ in range(3):
+            time.sleep(1.0)
+            filled, queried_price, status = self._query_fill(order_id)
+            if queried_price > 0:
+                real_price = queried_price
+            if status == "MATCHED" or filled > 0:
+                break
+
+        if filled <= 0:
+            try:
+                self._client.cancel(order_id)
+            except Exception:
+                log.warning("Failed to cancel unfilled order %s", order_id, exc_info=True)
+            log.info("Limit order %s did not fill — canceled", order_id[:20])
+            return None
+
+        if status != "MATCHED":
+            try:
+                self._client.cancel(order_id)
+            except Exception:
+                log.warning("Failed to cancel partial order %s", order_id, exc_info=True)
+            log.info("Limit order %s partially filled (%.4f/%.4f)", order_id[:20], filled, size)
+
+        return {
+            "orderID": order_id,
+            "filled_size": filled,
+            "fill_price": real_price,
+            "status": status,
+        }
