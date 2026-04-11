@@ -13,6 +13,7 @@ env/
 
 # Environment variables
 .env
+.env.backup
 
 # Database
 *.db
